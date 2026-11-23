@@ -42,8 +42,10 @@ class LocalLlamaAgentModel(
             if (promptTokens < 0) {
                 throw IllegalStateException("Native tokenizer could not size the agent prompt.")
             }
-            if (observationLimit > 0) {
+            if (observationLimit > 512) {
                 observationLimit /= 2
+            } else if (observationLimit > 0) {
+                observationLimit = 0
             } else if (requestLimit > MIN_REQUEST_CHARS) {
                 requestLimit = (requestLimit / 2).coerceAtLeast(MIN_REQUEST_CHARS)
             } else {
