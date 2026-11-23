@@ -124,3 +124,39 @@ Repair attempts are bounded by configurable limits for iterations, tokens, wall 
 - Patch tests for conflict, invalid paths, and rollback.
 - Adversarial tests for prompt injection inside repository files and command output.
 - End-to-end fixtures for bounded coding tasks.
+
+
+## Implemented agent foundation (M3 in progress)
+
+The current code now contains:
+- `AgentToolSpec`, `AgentToolCall`, `AgentToolResult`, and a unique-name registry.
+- `AgentRuntime`: bounded model/tool loop, cancellation checks, input validation, capability enforcement, explicit approval callback, output truncation, and typed completion status.
+- `AgentActionParser`: strict JSON action envelope parser; accepts only string arguments and nested objects.
+- `LocalLlamaAgentModel`: adapter from the current text-only JNI generation API to structured `tool` or `final` actions.
+- File tools for listing, reading, literal search, whole-file write, and exact unique-fragment replacement in a user-selected SAF document tree.
+- Change previews from file writes and blocked paths for common secret/credential filenames.
+- `ManagedProcessTool`: separate allowlisted executable runner with argument arrays (newline-delimited), fixed environment, bounded timeout/output, cancellation, and process-execution approval. It is currently a tool foundation for app-private workspaces and is not yet connected to the SAF project-agent UI.
+
+## Local model action protocol
+
+The local model must return exactly one JSON object per action:
+
+```json
+{"type":"tool","id":"call-1","name":"file.read","arguments":{"path":"src/Main.kt"}}
+```
+
+or
+
+```json
+{"type":"final","text":"Summary of verified findings."}
+```
+
+The tool loop does not interpret free-form text as a command. Unknown tools, missing/extra arguments, invalid JSON, and missing capabilities are rejected. File-write access is off by default in the UI and must be enabled explicitly for a task.
+
+## Current limitations
+
+- The 0.5B smoke-test model may not reliably emit valid tool JSON or produce large code edits. Tool-loop support is an engineering capability, not a quality guarantee for that model.
+- SAF providers differ. Rename-based file replacement is attempted with a temporary document and backup, but provider-specific behavior requires device testing.
+- No Git diff/status or build/test adapter is connected to the SAF agent yet.
+- The agent currently runs one bounded session; persistent task ledger, resumable sessions, checkpoints, multi-agent delegation, and rollback are pending.
+- Process execution is not granted to the selected-project agent; the managed process adapter remains separately gated until a safe project execution workspace/worker is implemented.
