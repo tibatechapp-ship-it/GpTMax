@@ -21,6 +21,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -42,6 +43,20 @@ import androidx.lifecycle.ViewModelProvider
 class MainActivity : ComponentActivity() {
     private lateinit var viewModel: GpTMaxViewModel
     private var pendingExpectedModelSha256: String? = null
+
+    private val workspacePicker = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri: Uri? ->
+        if (uri != null) {
+            runCatching {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                )
+            }
+            viewModel.selectWorkspace(uri)
+        }
+    }
 
     private val modelPicker = registerForActivityResult(
         ActivityResultContracts.OpenDocument(),
@@ -79,6 +94,11 @@ class MainActivity : ComponentActivity() {
                     onDeleteModel = viewModel::deleteModel,
                     onLoadModel = viewModel::loadStoredModel,
                     onUnloadModel = viewModel::unloadModel,
+                    onAgentRequestChange = viewModel::updateAgentRequest,
+                    onPickWorkspace = { workspacePicker.launch(null) },
+                    onRunAgent = viewModel::runAgent,
+                    onStopAgent = viewModel::stopAgent,
+                    onAgentWriteToggle = viewModel::setAgentWriteEnabled,
                     )
                 }
             }
@@ -100,6 +120,11 @@ private fun GpTMaxHome(
     onDeleteModel: (String) -> Unit,
     onLoadModel: (String) -> Unit,
     onUnloadModel: () -> Unit,
+    onAgentRequestChange: (String) -> Unit,
+    onPickWorkspace: () -> Unit,
+    onRunAgent: () -> Unit,
+    onStopAgent: () -> Unit,
+    onAgentWriteToggle: (Boolean) -> Unit,
 ) {
     var pendingDeletion by remember { mutableStateOf<StoredModel?>(null) }
     Surface(
