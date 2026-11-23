@@ -96,6 +96,7 @@ class AgentRuntime(
         grantedCapabilities: Set<ToolRisk>,
         approvedCallIds: Set<String> = emptySet(),
         cancellation: AtomicBoolean = AtomicBoolean(false),
+        approvalRequest: suspend (AgentToolCall, AgentToolSpec) -> Boolean = { _, _ -> false },
     ): AgentRunResult {
         require(request.isNotBlank()) { "Task request must not be blank." }
         val observations = mutableListOf<AgentObservation>()
@@ -131,11 +132,20 @@ class AgentRuntime(
                     } else {
                         validateArguments(tool.spec, call)?.let { error ->
                             AgentToolResult(call.name, call.id, ToolExecutionStatus.FAILURE, error)
-                        } ?: when (ToolPermissionPolicy.decide(
-                            tool.spec.risk,
-                            grantedCapabilities,
-                            call.id in approvedCallIds,
-                        )) {
+                        } ?: run {
+                            val initiallyApproved = call.id in approvedCallIds
+                            val needsApproval = ToolPermissionPolicy.decide(
+                                tool.spec.risk,
+                                grantedCapabilities,
+                                initiallyApproved,
+                            ) == ToolDecision.REQUIRE_USER_APPROVAL
+                            val approved = initiallyApproved || (needsApproval &&
+                                runCatching { approvalRequest(call, tool.spec) }.getOrDefault(false))
+                            when (ToolPermissionPolicy.decide(
+                                tool.spec.risk,
+                                grantedCapabilities,
+                                approved,
+                            )) {
                             ToolDecision.DENY_MISSING_CAPABILITY ->
                                 AgentToolResult(call.name, call.id, ToolExecutionStatus.DENIED,
                                     "Capability not granted for this task.")
