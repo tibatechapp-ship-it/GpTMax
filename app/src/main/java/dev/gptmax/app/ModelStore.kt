@@ -47,6 +47,11 @@ internal object ModelStore {
         require(shaPattern.matches(sha256)) { "Invalid model SHA-256." }
         val contentAddressed = File(directory, "$sha256.gguf")
         if (contentAddressed.isFile) {
+            // Never trust a content-addressed filename alone: verify bytes before loading.
+            val actualSha256 = sha256(contentAddressed)
+            require(actualSha256 == sha256) {
+                "Stored model integrity check failed. The file contents do not match its SHA-256 name."
+            }
             return StoredModel(
                 displayName = readMetadata(directory, sha256).getProperty("displayName")
                     ?: contentAddressed.name,
