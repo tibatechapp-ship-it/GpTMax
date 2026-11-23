@@ -222,6 +222,14 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
     fun deleteModel(sha256: String) {
         val snapshot = mutableState.value
         if (snapshot.isBusy || snapshot.isGenerating) return
+        if (snapshot.agentRunning) {
+            // Review finding #3: deleting model files while the coding agent is running would
+            // unload or corrupt the model underneath the active run.
+            mutableState.update {
+                it.copy(nativeStatus = "Stop the coding agent before deleting model files.")
+            }
+            return
+        }
         if (snapshot.modelReady && snapshot.activeModelSha256 == null) {
             mutableState.update {
                 it.copy(nativeStatus = "Loaded model identity is unknown. Unload the runtime before deleting stored files.")
@@ -277,7 +285,9 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
                 }
             } catch (error: Exception) {
                 mutableState.update {
-                    it.copy(nativeStatus = "Model unload failed: ${error.message ?: error.javaClass.simpleName}")
+                    it.copy(
+                        nativeStatus = "Model unload failed: ${error.message ?: error.javaClass.simpleName}"
+                    )
                 }
             } finally {
                 mutableState.update { it.copy(isBusy = false) }
