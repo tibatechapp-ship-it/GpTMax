@@ -21,7 +21,17 @@ set(LLAMA_LLGUIDANCE OFF CACHE BOOL "" FORCE)
 
 set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
 set(GGML_CPU ON CACHE BOOL "" FORCE)
-set(GGML_CPU_ARM_ARCH "armv8-a" CACHE STRING "" FORCE)
+
+# Set ARM tuning only for ARM ABIs. x86_64 must use ggml's architecture
+# detection rather than inheriting an ARM-specific compiler target.
+if(ANDROID_ABI STREQUAL "arm64-v8a")
+    set(GGML_CPU_ARM_ARCH "armv8-a" CACHE STRING "" FORCE)
+elseif(ANDROID_ABI STREQUAL "armeabi-v7a")
+    set(GGML_CPU_ARM_ARCH "armv7-a" CACHE STRING "" FORCE)
+else()
+    unset(GGML_CPU_ARM_ARCH CACHE)
+endif()
+
 set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
 set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
 set(GGML_BACKEND_DL OFF CACHE BOOL "" FORCE)
