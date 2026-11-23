@@ -183,7 +183,7 @@ class AgentRuntime(
         if (call.id.isBlank() || call.id.length > 128) return "Invalid tool call id."
         if (!call.arguments.keys.containsAll(spec.requiredArguments)) return "Missing required tool arguments."
         if (call.arguments.keys.any { it !in spec.allowedArguments }) return "Unexpected tool argument."
-        if (call.arguments.values.any { it.length > 16_000 }) return "Tool argument exceeds size limit."
+        if (call.arguments.any { (key, value) -> value.length > if (key == "content") 128 * 1024 else 16_000 }) return "Tool argument exceeds size limit."
         return null
     }
 }
