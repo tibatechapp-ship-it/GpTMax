@@ -274,9 +274,13 @@ class DocumentTreeReplaceTool(context: Context, treeUri: Uri) : AgentTool {
     }
 }
 
-fun createDocumentTreeToolRegistry(context: Context, treeUri: Uri): AgentToolRegistry =
+fun createDocumentTreeToolRegistry(context: Context, treeUri: Uri, contextEngine: ProjectContextEngine? = null): AgentToolRegistry =
     AgentToolRegistry(
-        listOf(
+        listOfNotNull(
+            contextEngine?.let { DocumentTreeContextIndexTool(context, treeUri, it) },
+            contextEngine?.let { ProjectContextRecallTool(it) },
+            contextEngine?.let { ProjectContextRememberTool(it) },
+            contextEngine?.let { ProjectContextCheckpointTool(it) },
             DocumentTreeListTool(context, treeUri),
             DocumentTreeReadTool(context, treeUri),
             DocumentTreeSearchTool(context, treeUri),

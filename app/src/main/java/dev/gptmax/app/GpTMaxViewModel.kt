@@ -8,6 +8,8 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import java.util.concurrent.atomic.AtomicBoolean
 import dev.gptmax.app.agent.AgentRunLimits
+import dev.gptmax.app.agent.ProjectContextEngine
+import dev.gptmax.app.agent.DocumentTreeContextIndexTool
 import dev.gptmax.app.agent.AgentTaskLedger
 import dev.gptmax.app.agent.AgentRuntime
 import dev.gptmax.app.agent.LocalLlamaAgentModel
@@ -328,7 +330,34 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) { ledger.record(sessionId, "session_started") }
-                val registry = createDocumentTreeToolRegistry(getApplication(), Uri.parse(treeUri))
+                val contextEngine = ProjectContextEngine(
+                    File(getApplication<Application>().filesDir, "agent/context-${sha256(treeUri)}.bin"),
+                )
+                withContext(Dispatchers.IO) {
+                    contextEngine.checkpoint(
+                        sessionId,
+                        snapshot.agentRequest.take(1_000),
+                        "Agent session started; context is available for recall.",
+                        "Recall relevant project context, inspect current workspace, then plan the next verified action.",
+                    )
+                }
+                val registry = createDocumentTreeToolRegistry(getApplication(), Uri.parse(treeUri), contextEngine)
+                val indexResult = withContext(Dispatchers.IO) {
+                    DocumentTreeContextIndexTool(getApplication(), Uri.parse(treeUri), contextEngine).execute(
+                        dev.gptmax.app.agent.AgentToolCall(
+                            "${sessionId}-context-index", "context.index", emptyMap(),
+                        ),
+                        cancellation,
+                    )
+                }
+                withContext(Dispatchers.IO) {
+                    ledger.record(sessionId, "context_index", "context.index", indexResult.status.name,
+                        indexResult.durationMs, indexResult.output)
+                }
+                mutableState.update { current ->
+                    current.copy(agentToolLog = (current.agentToolLog +
+                        ("context.index · ${indexResult.status}\n" + indexResult.output.take(1_500))).takeLast(12))
+                }
                 val capabilities = buildSet {
                     add(ToolRisk.READ_ONLY)
                     if (snapshot.agentWriteEnabled) add(ToolRisk.WORKSPACE_WRITE)
@@ -353,6 +382,13 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
                 )
                 withContext(Dispatchers.IO) {
                     ledger.record(sessionId, "session_finished", status = result.status.name, output = result.answer)
+                    contextEngine.checkpoint(
+                        sessionId,
+                        snapshot.agentRequest.take(1_000),
+                        "Session ended with status ${result.status}. ${result.answer.take(1_500)}",
+                        if (result.status.name == "COMPLETED") "Review the result and continue with the user's next requested task."
+                        else "Resume by checking the current workspace and rerunning the incomplete step.",
+                    )
                 }
                 val log = result.toolResults.map { tool ->
                     "${tool.toolName} · ${tool.status}\n${tool.output.take(2_500)}"
@@ -376,6 +412,12 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
             }
         }
     }
+
+
+    private fun sha256(value: String): String =
+        java.security.MessageDigest.getInstance("SHA-256")
+            .digest(value.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
 
     fun stopAgent() {
         agentCancellation?.set(true)
