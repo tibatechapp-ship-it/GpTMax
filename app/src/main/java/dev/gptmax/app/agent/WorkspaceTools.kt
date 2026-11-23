@@ -10,7 +10,7 @@ private val blockedNames = setOf(
     "id_rsa", "id_ed25519", "credentials.json", "secrets.json", "keystore.jks",
 )
 
-private fun isSensitiveFile(file: File): Boolean =
+internal fun isSensitiveFile(file: File): Boolean =
     file.name.lowercase() in blockedNames ||
         file.name.endsWith(".pem", ignoreCase = true) ||
         file.name.endsWith(".p12", ignoreCase = true) ||
