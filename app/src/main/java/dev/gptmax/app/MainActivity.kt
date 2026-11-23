@@ -356,6 +356,7 @@ private fun GpTMaxHome(
                     }
                 }
             }
+            WorkspaceEditorPanel(state.workspaceTreeUri)
             Text("Platform foundations", style = MaterialTheme.typography.titleMedium)
             FeatureRow("Model inference", "llama.cpp · native generation")
             FeatureRow("Agent runtime", "Local model · bounded tool loop")
