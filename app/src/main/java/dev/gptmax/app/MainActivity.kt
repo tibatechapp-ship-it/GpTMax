@@ -1,6 +1,7 @@
 package dev.gptmax.app
 
 import android.net.Uri
+import android.content.Intent
 import android.os.Bundle
 import java.util.Locale
 import androidx.activity.ComponentActivity
@@ -40,11 +41,14 @@ import androidx.lifecycle.ViewModelProvider
 
 class MainActivity : ComponentActivity() {
     private lateinit var viewModel: GpTMaxViewModel
+    private var pendingExpectedModelSha256: String? = null
 
     private val modelPicker = registerForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri: Uri? ->
-        if (uri != null) viewModel.importAndLoadModel(uri)
+        val expectedSha256 = pendingExpectedModelSha256
+        pendingExpectedModelSha256 = null
+        if (uri != null) viewModel.importAndLoadModel(uri, expectedSha256)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -58,7 +62,17 @@ class MainActivity : ComponentActivity() {
                     state = state,
                     onPromptChange = viewModel::updatePrompt,
                     onTemperatureChange = viewModel::updateTemperature,
-                    onPickModel = { modelPicker.launch(arrayOf("*/*")) },
+                    onPickModel = {
+                        pendingExpectedModelSha256 = null
+                        modelPicker.launch(arrayOf("*/*"))
+                    },
+                    onPickVerifiedTestModel = {
+                        pendingExpectedModelSha256 = TestModelCatalog.SHA256
+                        modelPicker.launch(arrayOf("*/*"))
+                    },
+                    onDownloadTestModel = {
+                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(TestModelCatalog.DOWNLOAD_URL)))
+                    },
                     onGenerate = viewModel::generate,
                     onCancel = viewModel::cancelGeneration,
                     onRefresh = viewModel::refreshRuntimeInfo,
@@ -78,6 +92,8 @@ private fun GpTMaxHome(
     onPromptChange: (String) -> Unit,
     onTemperatureChange: (Float) -> Unit,
     onPickModel: () -> Unit,
+    onPickVerifiedTestModel: () -> Unit,
+    onDownloadTestModel: () -> Unit,
     onGenerate: () -> Unit,
     onCancel: () -> Unit,
     onRefresh: () -> Unit,
@@ -111,6 +127,36 @@ private fun GpTMaxHome(
                     Text("Native inference runtime", style = MaterialTheme.typography.titleLarge)
                     Text(state.nativeStatus, style = MaterialTheme.typography.bodyMedium)
                     Text(state.buildInfo, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text("Recommended M1 test model", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        "${TestModelCatalog.DISPLAY_NAME} · 491 MB · Apache-2.0",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        "The model is downloaded separately. Import verifies the published SHA-256 before native loading.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(
+                        onClick = onDownloadTestModel,
+                        enabled = !state.isBusy && !state.isGenerating,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Download test model") }
+                    Button(
+                        onClick = onPickVerifiedTestModel,
+                        enabled = !state.isBusy && !state.isGenerating,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Import and verify downloaded Qwen GGUF") }
                 }
             }
             Card(
