@@ -12,7 +12,8 @@ internal object NativeBridge {
     external fun backendStatus(): String
     external fun nativeBuildInfo(): String
     external fun nativeLoadModel(modelPath: String): String
-    external fun nativeBeginGeneration()\n    external fun nativeGenerate(
+    external fun nativeBeginGeneration()
+    external fun nativeGenerate(
         prompt: String,
         maxTokens: Int,
         temperature: Float,
