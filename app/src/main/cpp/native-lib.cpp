@@ -71,6 +71,55 @@ jstring to_java_string(JNIEnv * env, const std::string & value) {
                           static_cast<jsize>(utf16.size()));
 }
 
+bool apply_model_chat_template(
+        const llama_model * model,
+        const std::string & user_prompt,
+        std::string & formatted_prompt,
+        std::string & error) {
+    const char * chat_template = llama_model_chat_template(model, nullptr);
+    if (chat_template == nullptr || chat_template[0] == '\\0') {
+        // Base completion models may not carry a chat template.
+        formatted_prompt = user_prompt;
+        return true;
+    }
+
+    if (user_prompt.size() >
+            (static_cast<size_t>(std::numeric_limits<int32_t>::max()) - 1024U) / 2U) {
+        error = "Prompt is too large to format with the model chat template.";
+        return false;
+    }
+
+    const llama_chat_message message = {"user", user_prompt.c_str()};
+    const size_t initial_capacity = std::max<size_t>(512U, user_prompt.size() * 2U + 256U);
+    std::vector<char> buffer(initial_capacity);
+    int32_t formatted_size = llama_chat_apply_template(
+            chat_template, &message, 1U, true, buffer.data(),
+            static_cast<int32_t>(buffer.size()));
+    if (formatted_size < 0) {
+        error = "The model chat template is not supported by this llama.cpp build.";
+        return false;
+    }
+
+    if (static_cast<size_t>(formatted_size) >= buffer.size()) {
+        const size_t required = static_cast<size_t>(formatted_size) + 1U;
+        if (required > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+            error = "Formatted chat prompt exceeds the supported size.";
+            return false;
+        }
+        buffer.resize(required);
+        formatted_size = llama_chat_apply_template(
+                chat_template, &message, 1U, true, buffer.data(),
+                static_cast<int32_t>(buffer.size()));
+        if (formatted_size < 0 || static_cast<size_t>(formatted_size) >= buffer.size()) {
+            error = "Could not format the prompt with the model chat template.";
+            return false;
+        }
+    }
+
+    formatted_prompt.assign(buffer.data(), static_cast<size_t>(formatted_size));
+    return !formatted_prompt.empty();
+}
+
 size_t complete_utf8_prefix(const std::string & value) {
     size_t i = 0;
     size_t complete = 0;
@@ -230,12 +279,23 @@ native_generate_impl(
         return to_java_string(env, "No model is loaded.");
     }
 
+    std::string formatted_prompt;
+    std::string template_error;
+    if (!apply_model_chat_template(g_model, prompt, formatted_prompt, template_error)) {
+        return to_java_string(env, template_error.empty()
+                ? "Could not prepare the model chat prompt." : template_error);
+    }
+    if (formatted_prompt.size() >
+            static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+        return to_java_string(env, "Formatted prompt is too large.");
+    }
+
     llama_set_abort_callback(g_context, abort_requested, nullptr);
     ScopedAbortCallback abort_callback_guard(g_context);
 
     const llama_vocab * vocab = llama_model_get_vocab(g_model);
-    const int32_t prompt_size = static_cast<int32_t>(prompt.size());
-    int32_t token_capacity = llama_tokenize(vocab, prompt.c_str(), prompt_size,
+    const int32_t prompt_size = static_cast<int32_t>(formatted_prompt.size());
+    int32_t token_capacity = llama_tokenize(vocab, formatted_prompt.c_str(), prompt_size,
                                              nullptr, 0, true, false);
     if (token_capacity == std::numeric_limits<int32_t>::min()) {
             return to_java_string(env, "Prompt tokenization overflow.");
