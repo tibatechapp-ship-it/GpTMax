@@ -12,6 +12,8 @@ internal object NativeBridge {
     external fun backendStatus(): String
     external fun nativeBuildInfo(): String
     external fun nativeLoadModel(modelPath: String): String
+    external fun nativeContextSize(): Int
+    external fun nativePromptTokenCount(prompt: String): Int
     external fun nativeBeginGeneration()
     external fun nativeGenerate(
         prompt: String,
