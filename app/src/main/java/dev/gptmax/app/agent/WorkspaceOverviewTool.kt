@@ -6,6 +6,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Produces a bounded, read-only repository map without executing project code
  * or reading file contents. This is a safe first step for repository-wide tasks.
+ *
+ * Traversal filtering is delegated to [SensitivePathPolicy] so credential directories such as
+ * `.ssh` or `.aws` are never even listed here.
  */
 class WorkspaceOverviewTool(private val root: File) : AgentTool {
     override val spec = AgentToolSpec(
@@ -24,11 +27,6 @@ class WorkspaceOverviewTool(private val root: File) : AgentTool {
         val workspace = root.canonicalFile
         require(workspace.isDirectory) { "Workspace root is not a directory." }
 
-        val ignored = setOf(
-            ".git", ".gradle", ".idea", ".venv", "venv", "__pycache__",
-            "node_modules", "build", "dist", "target", ".next",
-            ".pytest_cache", ".mypy_cache", ".ruff_cache",
-        )
         val importantFiles = setOf(
             "README.md", "pyproject.toml", "requirements.txt", "package.json",
             "tsconfig.json", "Cargo.toml", "go.mod", "build.gradle",
@@ -49,7 +47,7 @@ class WorkspaceOverviewTool(private val root: File) : AgentTool {
             else {
                 val relative = directory.relativeTo(workspace).path
                 val depth = relative.split(File.separatorChar).size
-                depth < 4 && directory.name !in ignored
+                depth < 4 && SensitivePathPolicy.isTraversalAllowedDirectoryName(directory.name)
             }
         }.forEach { file ->
             if (cancellation.get()) return@forEach

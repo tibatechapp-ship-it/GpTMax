@@ -18,7 +18,6 @@ class DocumentTreeContextIndexTool(context:Context,treeUri:Uri,private val engin
 
     override suspend fun execute(call:AgentToolCall,cancellation:AtomicBoolean):AgentToolResult {
         val start=System.nanoTime()
-        val ignored=setOf(".git",".gradle",".idea","node_modules","build","dist","target",".next",".venv","venv","__pycache__")
         val allowed=setOf("kt","kts","java","xml","json","yaml","yml","toml","md","txt","py","js","jsx","ts","tsx",
             "html","css","scss","gradle","properties","sh","c","h","cpp","hpp","rs","go","dart")
         val records=mutableListOf<ProjectContextEngine.FileRecord>()
@@ -35,12 +34,13 @@ class DocumentTreeContextIndexTool(context:Context,treeUri:Uri,private val engin
                 val name=child.name.orEmpty()
                 if(name.isBlank()) {skipped++;traversalComplete=false;continue}
                 if(child.isDirectory) {
-                    if(name !in ignored&&prefix.count{it=='/'}<MAX_DEPTH) queue.add(child to (if(prefix.isEmpty()) name else "$prefix/$name"))
+                    // SensitivePathPolicy is the single blocklist: credential directories such as
+                    // .ssh/.aws/.gcloud can never be crawled into the local context index.
+                    if(SensitivePathPolicy.isTraversalAllowedDirectoryName(name)&&prefix.count{it=='/'}<MAX_DEPTH) queue.add(child to (if(prefix.isEmpty()) name else "$prefix/$name"))
                     else skipped++
                     continue
                 }
-                if(!child.isFile||name.startsWith(".env",true)||name.lowercase() in setOf(".npmrc",".netrc","credentials.json","secrets.json","id_rsa","id_ed25519")||
-                    listOf(".pem",".key",".p12",".jks").any{name.endsWith(it,true)}||
+                if(!child.isFile||!SensitivePathPolicy.isAllowedFileName(name)||
                     name.substringAfterLast('.', "").lowercase() !in allowed||child.length() !in 1..MAX_BYTES.toLong()) {skipped++;continue}
                 val path=if(prefix.isEmpty())name else "$prefix/$name"
                 scanned++

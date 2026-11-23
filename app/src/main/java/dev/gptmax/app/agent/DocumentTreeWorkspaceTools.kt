@@ -7,30 +7,19 @@ import java.io.ByteArrayOutputStream
 import java.io.FileNotFoundException
 import java.util.concurrent.atomic.AtomicBoolean
 
-private val sensitiveDocumentNames = setOf(
-    ".env", ".env.local", ".env.production", ".npmrc", ".netrc", ".git-credentials",
-    "id_rsa", "id_ed25519", "credentials.json", "secrets.json", "keystore.jks",
-)
+/**
+ * SAF (document tree) workspace tools.
+ *
+ * Path and file-name safety decisions are delegated to [SensitivePathPolicy] so the document-tree
+ * tools and the file-based tools enforce exactly the same rules, and every traversal surface (direct
+ * resolve, search, overview, context index) shares one blocklist. Write operations are guarded by a
+ * shared [EditSafetyJournal] and keep a timestamped backup of the previous version instead of
+ * deleting it immediately, so no edit can be lost silently.
+ */
 
-private fun safeDocumentName(name: String): Boolean =
-    name.lowercase() !in sensitiveDocumentNames &&
-        !name.endsWith(".pem", true) &&
-        !name.endsWith(".p12", true) &&
-        !name.endsWith(".key", true)
+private fun documentSegments(path: String): List<String> = SensitivePathPolicy.validateRelativePath(path)
 
-private fun documentSegments(path: String): List<String> {
-    require(path.isNotBlank()) { "Path is required." }
-    require(!path.startsWith("/") && !path.startsWith("\\")) { "Absolute paths are not allowed." }
-    val parts = path.split('/', '\\')
-    require(parts.none { it.isBlank() || it == "." || it == ".." }) {
-        "Path traversal or empty path segment is not allowed."
-    }
-    val blockedDirectories = setOf(".git", ".ssh", ".aws", ".gradle", "node_modules")
-    require(parts.none { it.lowercase() in blockedDirectories }) {
-        "Access to credential, VCS metadata, and generated dependency directories is blocked."
-    }
-    return parts
-}
+private fun safeDocumentName(name: String): Boolean = SensitivePathPolicy.isAllowedFileName(name)
 
 private fun resolveDocument(root: DocumentFile, path: String): DocumentFile {
     var current = root
@@ -64,6 +53,18 @@ private fun readDocument(context: Context, file: DocumentFile, limit: Int): Stri
     return text
 }
 
+/** Keeps at most [keep] timestamped backups per file inside a document directory. Never throws. */
+private fun pruneOldDocumentBackups(parent: DocumentFile, name: String, keep: Int = 3) {
+    runCatching {
+        val prefix = "$name.gptmax-backup-"
+        parent.listFiles()
+            .filter { it.isFile && (it.name ?: "").startsWith(prefix) }
+            .sortedByDescending { it.name.orEmpty() }
+            .drop(keep)
+            .forEach { it.delete() }
+    }
+}
+
 class DocumentTreeListTool(context: Context, treeUri: Uri) : AgentTool {
     private val root = DocumentFile.fromTreeUri(context, treeUri)
         ?: throw IllegalArgumentException("Invalid workspace folder.")
@@ -88,7 +89,11 @@ class DocumentTreeListTool(context: Context, treeUri: Uri) : AgentTool {
     }
 }
 
-class DocumentTreeReadTool(context: Context, treeUri: Uri) : AgentTool {
+class DocumentTreeReadTool(
+    context: Context,
+    treeUri: Uri,
+    private val journal: EditSafetyJournal = EditSafetyJournal(),
+) : AgentTool {
     private val appContext = context.applicationContext
     private val root = DocumentFile.fromTreeUri(context, treeUri)
         ?: throw IllegalArgumentException("Invalid workspace folder.")
@@ -102,9 +107,11 @@ class DocumentTreeReadTool(context: Context, treeUri: Uri) : AgentTool {
     )
 
     override suspend fun execute(call: AgentToolCall, cancellation: AtomicBoolean): AgentToolResult {
-        val file = resolveDocument(root, call.arguments.getValue("path"))
-        return AgentToolResult(spec.name, call.id, ToolExecutionStatus.SUCCESS,
-            readDocument(appContext, file, 256 * 1024))
+        val relativePath = call.arguments.getValue("path")
+        val file = resolveDocument(root, relativePath)
+        val text = readDocument(appContext, file, 256 * 1024)
+        journal.recordRead(relativePath, ContentFingerprints.sha256(text))
+        return AgentToolResult(spec.name, call.id, ToolExecutionStatus.SUCCESS, text)
     }
 }
 
@@ -134,7 +141,7 @@ class DocumentTreeSearchTool(context: Context, treeUri: Uri) : AgentTool {
                 if (cancellation.get() || scanned >= 300 || matches.size >= 100) return
                 val name = item.name ?: return
                 if (item.isDirectory) {
-                    if (name !in setOf(".git", ".gradle", "build", ".idea", "node_modules")) {
+                    if (SensitivePathPolicy.isTraversalAllowedDirectoryName(name)) {
                         visit(item, if (prefix.isEmpty()) name else "$prefix/$name", depth + 1)
                     }
                 } else if (item.isFile && safeDocumentName(name) && item.length() <= 128 * 1024) {
@@ -159,14 +166,18 @@ class DocumentTreeSearchTool(context: Context, treeUri: Uri) : AgentTool {
     }
 }
 
-class DocumentTreeWriteTool(context: Context, treeUri: Uri) : AgentTool {
+class DocumentTreeWriteTool(
+    context: Context,
+    treeUri: Uri,
+    private val journal: EditSafetyJournal = EditSafetyJournal(),
+) : AgentTool {
     private val appContext = context.applicationContext
     private val root = DocumentFile.fromTreeUri(context, treeUri)
         ?: throw IllegalArgumentException("Invalid workspace folder.")
 
     override val spec = AgentToolSpec(
         "file.write",
-        "Create or replace a UTF-8 text file in the selected project. Provide relative path and complete content.",
+        "Create or replace a UTF-8 text file in the selected project. Provide relative path and complete content. Existing files must be read first; external changes since the last read are rejected.",
         setOf("path", "content"),
         setOf("path", "content"),
         ToolRisk.WORKSPACE_WRITE,
@@ -174,7 +185,8 @@ class DocumentTreeWriteTool(context: Context, treeUri: Uri) : AgentTool {
 
     override suspend fun execute(call: AgentToolCall, cancellation: AtomicBoolean): AgentToolResult {
         if (cancellation.get()) return AgentToolResult(spec.name, call.id, ToolExecutionStatus.CANCELLED, "Cancelled.")
-        val segments = documentSegments(call.arguments.getValue("path"))
+        val relativePath = call.arguments.getValue("path")
+        val segments = documentSegments(relativePath)
         val name = segments.last()
         require(safeDocumentName(name)) { "Writing credential and secret files is blocked." }
         val content = call.arguments.getValue("content")
@@ -189,9 +201,17 @@ class DocumentTreeWriteTool(context: Context, treeUri: Uri) : AgentTool {
         val existing = parent.findFile(name)
         if (existing != null) require(existing.isFile) { "Target is not a file." }
         val oldContent = existing?.let { readDocument(appContext, it, 128 * 1024) }
+        val decision = journal.checkWrite(
+            relativePath,
+            oldContent?.let { ContentFingerprints.sha256(it) },
+            existing != null,
+        )
+        if (decision is EditSafetyJournal.WriteDecision.Blocked) throw IllegalStateException(decision.reason)
         val tempName = "$name.gptmax-tmp-${System.nanoTime()}"
         val temp = parent.createFile("text/plain", tempName)
             ?: throw IllegalStateException("Could not create temporary document.")
+        var backup: DocumentFile? = null
+        var succeeded = false
         try {
             val output = appContext.contentResolver.openOutputStream(temp.uri, "wt")
                 ?: throw IllegalStateException("Could not open temporary document for writing.")
@@ -200,23 +220,29 @@ class DocumentTreeWriteTool(context: Context, treeUri: Uri) : AgentTool {
                 temp.delete()
                 return AgentToolResult(spec.name, call.id, ToolExecutionStatus.CANCELLED, "Cancelled.")
             }
-            val backupName = "$name.gptmax-backup-${System.nanoTime()}"
-            val backup = if (existing != null) {
+            if (existing != null) {
+                val backupName = "$name.gptmax-backup-${System.nanoTime()}"
                 require(existing.renameTo(backupName)) { "Could not preserve existing file for rollback." }
-                existing
-            } else null
+                backup = existing
+            }
             val moved = temp.renameTo(name)
             if (!moved) {
                 backup?.renameTo(name)
                 throw IllegalStateException("Document provider could not finalize file replacement.")
             }
-            backup?.delete()
+            journal.recordWrite(relativePath, ContentFingerprints.sha256(content), backup?.name)
+            succeeded = true
+            pruneOldDocumentBackups(parent, name)
+        } catch (failure: Exception) {
+            if (!succeeded) journal.recordFailedWrite(relativePath, backup?.name)
+            throw failure
         } finally {
             if (temp.exists()) temp.delete()
         }
         val preview = renderChangePreview(oldContent.orEmpty(), content)
+        val rollbackHint = backup?.name?.let { " Previous version kept as $it for manual rollback." } ?: ""
         return AgentToolResult(spec.name, call.id, ToolExecutionStatus.SUCCESS,
-            "Updated $name.\n$preview")
+            "Updated $name.\n$preview$rollbackHint")
     }
 
     private fun renderChangePreview(before: String, after: String): String {
@@ -238,11 +264,15 @@ class DocumentTreeWriteTool(context: Context, treeUri: Uri) : AgentTool {
     }
 }
 
-class DocumentTreeReplaceTool(context: Context, treeUri: Uri) : AgentTool {
+class DocumentTreeReplaceTool(
+    context: Context,
+    treeUri: Uri,
+    private val journal: EditSafetyJournal = EditSafetyJournal(),
+    private val writer: DocumentTreeWriteTool = DocumentTreeWriteTool(context, treeUri, journal),
+) : AgentTool {
     private val appContext = context.applicationContext
     private val root = DocumentFile.fromTreeUri(context, treeUri)
         ?: throw IllegalArgumentException("Invalid workspace folder.")
-    private val writer = DocumentTreeWriteTool(context, treeUri)
 
     override val spec = AgentToolSpec(
         "file.replace",
@@ -258,8 +288,10 @@ class DocumentTreeReplaceTool(context: Context, treeUri: Uri) : AgentTool {
         require(oldText.isNotEmpty() && oldText.length <= 16_000 && newText.length <= 16_000) {
             "Replacement fragments must be 1-16000 characters."
         }
-        val file = resolveDocument(root, call.arguments.getValue("path"))
+        val relativePath = call.arguments.getValue("path")
+        val file = resolveDocument(root, relativePath)
         val content = readDocument(appContext, file, 128 * 1024)
+        journal.recordRead(relativePath, ContentFingerprints.sha256(content))
         val first = content.indexOf(oldText)
         val occurrences = if (first < 0) 0 else if (content.indexOf(oldText, first + oldText.length) < 0) 1 else 2
         require(occurrences == 1) {
@@ -268,14 +300,16 @@ class DocumentTreeReplaceTool(context: Context, treeUri: Uri) : AgentTool {
         }
         val updated = content.replaceFirst(oldText, newText)
         return writer.execute(
-            AgentToolCall(call.id, "file.write", mapOf("path" to call.arguments.getValue("path"), "content" to updated)),
+            AgentToolCall(call.id, "file.write", mapOf("path" to relativePath, "content" to updated)),
             cancellation,
         )
     }
 }
 
-fun createDocumentTreeToolRegistry(context: Context, treeUri: Uri, contextEngine: ProjectContextEngine? = null): AgentToolRegistry =
-    AgentToolRegistry(
+fun createDocumentTreeToolRegistry(context: Context, treeUri: Uri, contextEngine: ProjectContextEngine? = null): AgentToolRegistry {
+    val journal = EditSafetyJournal()
+    val writer = DocumentTreeWriteTool(context, treeUri, journal)
+    return AgentToolRegistry(
         listOfNotNull(
             contextEngine?.let { DocumentTreeContextIndexTool(context, treeUri, it) },
             contextEngine?.let { ProjectContextRecallTool(it) },
@@ -285,9 +319,10 @@ fun createDocumentTreeToolRegistry(context: Context, treeUri: Uri, contextEngine
             contextEngine?.let { ProjectContextStageTool(it) },
             DocumentTreeOverviewTool(context, treeUri),
             DocumentTreeListTool(context, treeUri),
-            DocumentTreeReadTool(context, treeUri),
+            DocumentTreeReadTool(context, treeUri, journal),
             DocumentTreeSearchTool(context, treeUri),
-            DocumentTreeWriteTool(context, treeUri),
-            DocumentTreeReplaceTool(context, treeUri),
+            writer,
+            DocumentTreeReplaceTool(context, treeUri, journal, writer),
         ),
     )
+}

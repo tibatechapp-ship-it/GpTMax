@@ -5,7 +5,11 @@ import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** SAF-backed bounded project map. It reads names/metadata only and never executes project code. */
+/** SAF-backed bounded project map. It reads names/metadata only and never executes project code.
+ *
+ * Traversal filtering is delegated to [SensitivePathPolicy] so credential directories such as
+ * `.ssh` or `.aws` are never listed in the overview tree.
+ */
 class DocumentTreeOverviewTool(context: Context, treeUri: Uri) : AgentTool {
     private val root = DocumentFile.fromTreeUri(context.applicationContext, treeUri)
         ?: throw IllegalArgumentException("Invalid workspace folder.")
@@ -18,11 +22,6 @@ class DocumentTreeOverviewTool(context: Context, treeUri: Uri) : AgentTool {
 
     override suspend fun execute(call: AgentToolCall, cancellation: AtomicBoolean): AgentToolResult {
         val started = System.nanoTime()
-        val ignored = setOf(
-            ".git", ".gradle", ".idea", ".venv", "venv", "__pycache__",
-            "node_modules", "build", "dist", "target", ".next",
-            ".pytest_cache", ".mypy_cache", ".ruff_cache",
-        )
         val important = setOf(
             "README.md", "pyproject.toml", "requirements.txt", "package.json",
             "tsconfig.json", "Cargo.toml", "go.mod", "build.gradle",
@@ -50,14 +49,14 @@ class DocumentTreeOverviewTool(context: Context, treeUri: Uri) : AgentTool {
                     return
                 }
                 val name = item.name ?: continue
-                if (item.isDirectory && name in ignored) continue
+                if (item.isDirectory && !SensitivePathPolicy.isTraversalAllowedDirectoryName(name)) continue
                 visited++
                 val relative = if (prefix.isEmpty()) name else "$prefix/$name"
                 if (relative.count { it == '/' } < MAX_TREE_DEPTH) {
                     tree += relative + if (item.isDirectory) "/" else ""
                 }
                 if (item.isFile) {
-                    if (name in important && safeDocumentName(name)) manifests += relative
+                    if (name in important && SensitivePathPolicy.isAllowedFileName(name)) manifests += relative
                     val segments = relative.split('/')
                     if (segments.any { it.equals("src", true) || it.equals("app", true) || it.equals("lib", true) || it.equals("main", true) }) {
                         sourceRoots += segments.first()
