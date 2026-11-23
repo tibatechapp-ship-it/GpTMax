@@ -174,3 +174,11 @@ The tool loop does not interpret free-form text as a command. Unknown tools, mis
 - `context.remember` stores short project decisions/conventions; `context.checkpoint` stores goal, progress, and next step. Sensitive-looking values are rejected.
 - The app performs a bounded index refresh at the start of an agent run and writes an automatic checkpoint when the run starts and ends. These checkpoints support continuity but do not yet reconstruct prior model observations or tool-call history.
 - Indexing and memory remain on-device. They are not synced to a remote service.
+
+## Context engine hardening and retrieval
+
+- Retrieval uses field-weighted lexical scoring (path, declared symbols, snippet frequency, import mentions and exact query phrase), then adds a bounded one-hop neighborhood of imported source files and related tests.
+- The index stores bounded import and declaration metadata (classes, interfaces, functions, structs, and related symbols) plus file kind classifications for manifests, tests, docs, and config.
+- A completed SAF snapshot reports added/updated/removed/unchanged entries. A capped scan, failed list/read operation, or cancellation does not replace the prior index; this prevents false deletion of files that could not be visited. A complete snapshot removes entries for files that are actually gone or no longer indexable.
+- The version-2 context store reads version-1 records for migration. Task history includes bounded stages and summarized tool observations; file-read source text is deliberately not copied into persistent tool history.
+- At the next agent run, the latest prior task checkpoint is restored into the request context. The model can call `context.restore` for a specific task and `context.stage` to record meaningful phases. Project stores are keyed by a SHA-256 of the selected SAF tree URI, so notes, indexes, and task history remain separate per selected project.

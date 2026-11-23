@@ -14,7 +14,7 @@ class ProjectContextEngineTest {
             val engine = ProjectContextEngine(store)
             engine.replaceIndex(listOf(engine.createRecord(
                 "src/Agent.kt", 120, 10,
-                "class Agent {\\n// bounded tool loop\\nAPI_KEY=private-value\\n}",
+                "class Agent {\n// bounded tool loop\nAPI_KEY=private-value\n}",
             )))
             engine.remember("architecture", "Agent uses a bounded tool loop and explicit tool permissions.")
             engine.checkpoint("task-1", "Improve context recall", "Local index persisted",
@@ -42,4 +42,61 @@ class ProjectContextEngineTest {
             assertTrue(rejected)
         } finally { directory.deleteRecursively() }
     }
+    @Test
+    fun ranksTaskRelevantFilesAndIncludesRelatedImportAndTestFiles() {
+        val directory=Files.createTempDirectory("gptmax-context-rank").toFile()
+        try {
+            val engine=ProjectContextEngine(directory.resolve("ctx.bin"))
+            engine.replaceIndex(listOf(
+                engine.createRecord("src/Agent.kt",100,1,"package app\nimport app.tools.FileReader\nclass Agent { fun inspectRepository() {} }"),
+                engine.createRecord("src/tools/FileReader.kt",100,1,"package app.tools\nclass FileReader { fun readWorkspace() {} }"),
+                engine.createRecord("src/test/AgentTest.kt",100,1,"class AgentTest { fun testInspectRepository() {} }"),
+                engine.createRecord("docs/other.md",100,1,"unrelated gardening notes")
+            ))
+            val result=engine.recall("Agent inspectRepository",5)
+            assertTrue(result.indexOf("src/Agent.kt")>=0)
+            assertTrue(result.contains("src/tools/FileReader.kt"))
+            assertTrue(result.contains("src/test/AgentTest.kt"))
+            assertFalse(result.contains("docs/other.md"))
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test
+    fun completeSnapshotRemovesDeletedFilesAndRestoresToolHistory() {
+        val directory=Files.createTempDirectory("gptmax-context-delta").toFile()
+        try {
+            val store=directory.resolve("ctx.bin")
+            val engine=ProjectContextEngine(store)
+            val old=engine.createRecord("src/Old.kt",10,1,"class Old {}")
+            val kept=engine.createRecord("src/Kept.kt",10,1,"class Kept {}")
+            engine.replaceIndex(listOf(old,kept))
+            val delta=engine.replaceIndex(listOf(kept))
+            assertTrue(delta.removed==1)
+            engine.checkpoint("task-x","Implement context graph","Indexed sources","Run tests")
+            engine.addStage("task-x","validation","blocked","Android build pending")
+            engine.observeTool("task-x","file.search","SUCCESS","Found references in src/Kept.kt")
+            val reopened=ProjectContextEngine(store)
+            val restored=reopened.restoreTask("task-x")
+            assertTrue(restored.contains("Run tests"))
+            assertTrue(restored.contains("validation"))
+            assertTrue(restored.contains("file.search"))
+            assertFalse(reopened.recall("Old",5).contains("src/Old.kt"))
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test
+    fun projectStoresRemainIsolated() {
+        val directory=Files.createTempDirectory("gptmax-context-isolation").toFile()
+        try {
+            val a=ProjectContextEngine(directory.resolve("project-a.bin"))
+            val b=ProjectContextEngine(directory.resolve("project-b.bin"))
+            a.remember("decision","Project A uses Room")
+            b.remember("decision","Project B uses SQLite")
+            assertTrue(a.recall("Room",5).contains("Room"))
+            assertFalse(a.recall("SQLite",5).contains("SQLite"))
+            assertTrue(b.recall("SQLite",5).contains("SQLite"))
+            assertFalse(b.recall("Room",5).contains("Room"))
+        } finally { directory.deleteRecursively() }
+    }
+
 }

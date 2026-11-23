@@ -20,15 +20,16 @@ class DocumentTreeContextIndexTool(context:Context,treeUri:Uri,private val engin
         val records=mutableListOf<ProjectContextEngine.FileRecord>()
         var skipped=0
         var scanned=0
+        var traversalComplete=true
         val queue=ArrayDeque<Pair<DocumentFile,String>>()
         queue.add(root to "")
         while(queue.isNotEmpty()&&!cancellation.get()&&scanned<MAX_FILES) {
             val (dir,prefix)=queue.removeFirst()
-            val children=runCatching{dir.listFiles()}.getOrDefault(emptyArray())
+            val children=runCatching{dir.listFiles()}.getOrElse{traversalComplete=false;skipped++;emptyArray()}
             for(child in children) {
                 if(cancellation.get()||scanned>=MAX_FILES) break
                 val name=child.name.orEmpty()
-                if(name.isBlank()) {skipped++;continue}
+                if(name.isBlank()) {skipped++;traversalComplete=false;continue}
                 if(child.isDirectory) {
                     if(name !in ignored&&prefix.count{it=='/'}<MAX_DEPTH) queue.add(child to (if(prefix.isEmpty()) name else "$prefix/$name"))
                     else skipped++
@@ -42,14 +43,17 @@ class DocumentTreeContextIndexTool(context:Context,treeUri:Uri,private val engin
                 val previous=engine.recordFor(path)
                 if(previous!=null&&previous.size==child.length()&&previous.modified==child.lastModified()){records+=previous;continue}
                 val content=runCatching{readDocument(appContext,child,MAX_BYTES)}.getOrNull()
-                if(content==null){skipped++;continue}
+                if(content==null){skipped++;previous?.let{records+=it};traversalComplete=false;continue}
                 records+=engine.createRecord(path,child.length(),child.lastModified(),content)
             }
         }
         if(cancellation.get()) return AgentToolResult(spec.name,call.id,ToolExecutionStatus.CANCELLED,"Index cancelled; previous index retained.")
-        engine.replaceIndex(records)
+        if(scanned>=MAX_FILES||!traversalComplete) return AgentToolResult(spec.name,call.id,ToolExecutionStatus.SUCCESS,
+            "Index scan was capped or a SAF read/list operation failed; previous index retained to avoid false deletions.",
+            (System.nanoTime()-start)/1_000_000L)
+        val delta=engine.replaceIndex(records,complete=true)
         return AgentToolResult(spec.name,call.id,ToolExecutionStatus.SUCCESS,
-            "Context index refreshed. Indexed=${records.size}; skipped=$skipped; store: ${engine.stats()}",
+            "Context index refreshed. Added=${delta.added}; updated=${delta.updated}; removed=${delta.removed}; unchanged=${delta.unchanged}; skipped=$skipped; store: ${engine.stats()}",
             (System.nanoTime()-start)/1_000_000L)
     }
     companion object {private const val MAX_FILES=1200;private const val MAX_DEPTH=7;private const val MAX_BYTES=64*1024}
@@ -88,5 +92,26 @@ class ProjectContextCheckpointTool(private val engine:ProjectContextEngine):Agen
         engine.checkpoint(call.arguments.getValue("task_id"),call.arguments.getValue("goal"),
             call.arguments.getValue("progress"),call.arguments.getValue("next_step"))
         return AgentToolResult(spec.name,call.id,ToolExecutionStatus.SUCCESS,"Checkpoint saved locally.")
+    }
+}
+
+class ProjectContextRestoreTool(private val engine:ProjectContextEngine):AgentTool {
+    override val spec=AgentToolSpec("context.restore",
+        "Restore saved progress, stage history, and summarized tool observations for a prior task in this selected project.",
+        setOf("task_id"),setOf("task_id"),ToolRisk.READ_ONLY)
+    override suspend fun execute(call:AgentToolCall,cancellation:AtomicBoolean):AgentToolResult {
+        if(cancellation.get())return AgentToolResult(spec.name,call.id,ToolExecutionStatus.CANCELLED,"Cancelled.")
+        return AgentToolResult(spec.name,call.id,ToolExecutionStatus.SUCCESS,engine.restoreTask(call.arguments.getValue("task_id")))
+    }
+}
+class ProjectContextStageTool(private val engine:ProjectContextEngine):AgentTool {
+    override val spec=AgentToolSpec("context.stage",
+        "Record a concise non-sensitive task phase and status (analysis, implementation, validation, blocked).",
+        setOf("task_id","stage","status"),setOf("task_id","stage","status","detail"),ToolRisk.READ_ONLY)
+    override suspend fun execute(call:AgentToolCall,cancellation:AtomicBoolean):AgentToolResult {
+        if(cancellation.get())return AgentToolResult(spec.name,call.id,ToolExecutionStatus.CANCELLED,"Cancelled.")
+        engine.addStage(call.arguments.getValue("task_id"),call.arguments.getValue("stage"),
+            call.arguments.getValue("status"),call.arguments["detail"].orEmpty())
+        return AgentToolResult(spec.name,call.id,ToolExecutionStatus.SUCCESS,"Task stage saved.")
     }
 }

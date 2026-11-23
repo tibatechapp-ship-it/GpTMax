@@ -333,7 +333,10 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
                 val contextEngine = ProjectContextEngine(
                     File(getApplication<Application>().filesDir, "agent/context-${sha256(treeUri)}.bin"),
                 )
+                val previousCheckpoint = contextEngine.latestCheckpoint()
+                val resumeContext = previousCheckpoint?.let { contextEngine.restoreTask(it.taskId) }.orEmpty()
                 withContext(Dispatchers.IO) {
+                    contextEngine.addStage(sessionId, "session", "started", "New agent run started.")
                     contextEngine.checkpoint(
                         sessionId,
                         snapshot.agentRequest.take(1_000),
@@ -367,12 +370,12 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
                     registry = registry,
                     limits = AgentRunLimits(maxToolCalls = 8, maxObservationChars = 6_000),
                 ).run(
-                    request = snapshot.agentRequest,
+                    request = snapshot.agentRequest + if (resumeContext.isNotBlank()) "\n\nRelevant prior project task checkpoint:\n" + resumeContext else "",
                     grantedCapabilities = capabilities,
                     cancellation = cancellation,
                     onToolResult = { tool ->
                         withContext(Dispatchers.IO) {
-                            ledger.record(sessionId, "tool_result", tool.toolName, tool.status.name, tool.durationMs, tool.output)
+                            ledger.record(sessionId, "tool_result", tool.toolName, tool.status.name, tool.durationMs, tool.output)\n                            contextEngine.observeTool(sessionId, tool.toolName, tool.status.name,\n                                if (tool.toolName == "file.read") "File read succeeded; source content is intentionally not copied into persistent tool history." else tool.output.take(700) )\n                            contextEngine.addStage(sessionId, "tool:${tool.toolName}", tool.status.name, tool.output.take(300))
                         }
                         val entry = tool.toolName + " · " + tool.status + "\n" + tool.output.take(2_500)
                         mutableState.update { current ->
@@ -381,7 +384,7 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
                     },
                 )
                 withContext(Dispatchers.IO) {
-                    ledger.record(sessionId, "session_finished", status = result.status.name, output = result.answer)
+                    ledger.record(sessionId, "session_finished", status = result.status.name, output = result.answer)\n                    contextEngine.addStage(sessionId, "session", result.status.name, result.answer.take(500))
                     contextEngine.checkpoint(
                         sessionId,
                         snapshot.agentRequest.take(1_000),
