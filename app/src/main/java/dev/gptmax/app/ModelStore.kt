@@ -35,8 +35,10 @@ internal object ModelStore {
                     )
                 }.getOrNull()
             }
+            .groupBy { it.sha256 }
+            .values
+            .map { duplicates -> duplicates.first() }
             .sortedBy { it.displayName.lowercase() }
-            .toList()
     }
 
     fun findBySha256(directory: File, sha256: String): StoredModel? {
@@ -82,17 +84,27 @@ internal object ModelStore {
     fun delete(directory: File, sha256: String, activeModelFile: File? = null) {
         require(shaPattern.matches(sha256)) { "Invalid model SHA-256." }
         val canonicalDirectory = directory.canonicalFile
-        val model = findBySha256(directory, sha256)
-            ?: throw IllegalArgumentException("Model is not present in private storage.")
-        require(model.file.canonicalFile.parentFile == canonicalDirectory) {
-            "Refusing to delete a file outside model storage."
+        val matchingFiles = directory.listFiles().orEmpty()
+            .filter { file ->
+                file.isFile && file.extension.equals("gguf", ignoreCase = true) &&
+                    runCatching { sha256(file) == sha256 }.getOrDefault(false)
+            }
+        require(matchingFiles.isNotEmpty()) {
+            "Model is not present in private storage."
         }
-        if (activeModelFile != null &&
-            model.file.canonicalFile == activeModelFile.canonicalFile
-        ) {
-            throw IllegalStateException("Unload the active model before deleting it.")
+        matchingFiles.forEach { file ->
+            require(file.canonicalFile.parentFile == canonicalDirectory) {
+                "Refusing to delete a file outside model storage."
+            }
+            if (activeModelFile != null &&
+                file.canonicalFile == activeModelFile.canonicalFile
+            ) {
+                throw IllegalStateException("Unload the active model before deleting it.")
+            }
         }
-        check(model.file.delete()) { "Could not delete model file." }
+        matchingFiles.forEach { file ->
+            check(file.delete()) { "Could not delete model file." }
+        }
         File(directory, "$sha256.meta").delete()
     }
 
@@ -112,8 +124,10 @@ internal object ModelStore {
     private fun readMetadata(directory: File, sha256: String): Properties {
         val file = File(directory, "$sha256.meta")
         if (!file.isFile) return Properties()
-        return Properties().also { properties ->
-            FileInputStream(file).use(properties::load)
-        }
+        return runCatching {
+            Properties().also { properties ->
+                FileInputStream(file).use { input -> properties.load(input) }
+            }
+        }.getOrDefault(Properties())
     }
 }
