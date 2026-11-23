@@ -283,6 +283,7 @@ fun createDocumentTreeToolRegistry(context: Context, treeUri: Uri, contextEngine
             contextEngine?.let { ProjectContextCheckpointTool(it) },
             contextEngine?.let { ProjectContextRestoreTool(it) },
             contextEngine?.let { ProjectContextStageTool(it) },
+            DocumentTreeOverviewTool(context, treeUri),
             DocumentTreeListTool(context, treeUri),
             DocumentTreeReadTool(context, treeUri),
             DocumentTreeSearchTool(context, treeUri),
