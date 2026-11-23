@@ -72,6 +72,11 @@ fun AgentScreen(viewModel: AgentViewModel = androidx.lifecycle.viewmodel.compose
                 },
                 enabled = phase == AgentPhase.IDLE || phase == AgentPhase.DONE || phase == AgentPhase.FAILED,
             ) { Text("Run") }
+
+            // Per-request cancellation (review #5): visible stop control.
+            if (phase != AgentPhase.IDLE && phase != AgentPhase.DONE && phase != AgentPhase.FAILED) {
+                OutlinedButton(onClick = { viewModel.cancel() }) { Text("Stop") }
+            }
         }
 
         PhaseChip(phase)
