@@ -14,8 +14,10 @@ android {
         minSdk = 26
         targetSdk = 35
         ndk {
-            // M1 proof target: modern Android ARM64 devices only.
-            abiFilters += setOf("arm64-v8a")
+            // Package native runtimes for the main Android device families:
+            // 64-bit ARM phones, legacy 32-bit ARM phones, and x86_64 devices.
+            // Android selects the matching shared library at install time.
+            abiFilters += setOf("arm64-v8a", "armeabi-v7a", "x86_64")
         }
         versionCode = 1
         versionName = "0.1.0"
