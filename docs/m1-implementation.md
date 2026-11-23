@@ -20,6 +20,12 @@
 - The model registry lists stored GGUF files, cleans incomplete partial files, handles malformed metadata without hiding valid model files, and supports reloading stored models and explicit deletion after an in-app confirmation. Deleting the currently loaded model unloads the native runtime first.
 - Generation cancellation is signaled atomically and wired to llama.cpp's abort callback. Model unload/shutdown signals cancellation before waiting for the native operation lock, preventing context destruction during active generation.
 
+
+- The recommended Qwen2.5-0.5B-Instruct Q4_K_M smoke-test artifact is catalogued separately from the APK. Its official SHA-256 is checked during the verified-import flow; generic GGUF import remains available.
+- The native bridge now applies `llama_model_chat_template(model, nullptr)` through the pinned `llama_chat_apply_template` API before tokenization. If a model supplies no chat template, the bridge retains raw-prompt completion behavior; if a supplied template is unsupported, it returns an explicit error rather than silently generating with a malformed prompt.
+- Stored content-addressed model files are re-hashed before reloading; a filename that claims a digest is not accepted as proof of file integrity.
+- A reproducible installation, generation, cancellation, lifecycle, and evidence-capture procedure is maintained in [m1-device-validation.md](m1-device-validation.md).
+
 ## Toolchain baseline
 
 - JDK 17; Gradle 8.9
