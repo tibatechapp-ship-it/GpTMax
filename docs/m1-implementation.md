@@ -10,13 +10,13 @@
 - Import rejects non-`.gguf` names, empty files, insufficient known free space, size mismatches, and files without the GGUF magic header.
 - Copy is streamed to a temporary file, SHA-256 is calculated while copying, output is synced, and the file is renamed only after validation. Failed imports clean up temporary and destination files.
 - Import and native model loading run off the UI thread.
-- Native generation path converts Java UTF-16 prompt input to standard UTF-8 (including surrogate pairs), tokenizes the prompt, evaluates it with llama.cpp in batches bounded by `llama_n_batch`, samples output tokens, decodes token pieces, and streams complete UTF-8 text chunks through a JNI callback.
+- Native generation path converts Java UTF-16 prompt input to standard UTF-8 (including surrogate pairs), applies the model-embedded GGUF chat template when present, tokenizes the formatted prompt, evaluates it with llama.cpp in batches bounded by `llama_n_batch`, samples output tokens, decodes token pieces, and streams complete UTF-8 text chunks through a JNI callback.
 - Native model paths use the same explicit UTF-16-to-UTF-8 conversion rather than relying on JNI Modified UTF-8, avoiding corrupted supplementary Unicode characters.
 - Unicode conversion is isolated in a dependency-free C++ utility with strict UTF-8 validation and replacement handling for malformed UTF-16/UTF-8.
 - JNI string access uses a scoped RAII guard so `ReleaseStringChars` runs on every C++ return or exception path.
 - CI compiles and runs native Unicode regression tests covering Arabic, mixed Arabic/English, supplementary-plane emoji, isolated UTF-16 surrogates, overlong UTF-8, UTF-8 encoded surrogates, and out-of-range code points.
 - The UI exposes a prompt, temperature control, generated output, and a stop action.
-- Imported models are stored by SHA-256 content identity with a private metadata sidecar; identical imports reuse the existing file instead of consuming additional storage.
+- Imported models are stored by SHA-256 content identity with a private metadata sidecar; identical imports reuse the existing file instead of consuming additional storage. Content-addressed files are re-hashed before stored-model reload so a filename alone is never treated as proof of integrity.
 - The model registry lists stored GGUF files, cleans incomplete partial files, handles malformed metadata without hiding valid model files, and supports reloading stored models and explicit deletion after an in-app confirmation. Deleting the currently loaded model unloads the native runtime first.
 - Generation cancellation is signaled atomically and wired to llama.cpp's abort callback. Model unload/shutdown signals cancellation before waiting for the native operation lock, preventing context destruction during active generation.
 
@@ -57,3 +57,18 @@ Record device model, Android version, ABI, backend commit, model architecture/qu
 - Unit tests cover unloaded, loaded, partial, unavailable, and case-insensitive native status strings.
 - The current English interface is explicitly rendered left-to-right regardless of the Android system language; temperature values use locale-stable decimal formatting.
 - The Generate action remains disabled unless the native runtime confirms a loaded GGUF model and ready inference context.
+
+
+## First-device test model
+
+The first reproducible M1 smoke-test model is the official Qwen quantized GGUF artifact:
+
+- Repository: [Qwen/Qwen2.5-0.5B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF)
+- File: `qwen2.5-0.5b-instruct-q4_k_m.gguf`
+- Quantization: Q4_K_M; architecture: Qwen2
+- Published size: 491 MB
+- License: Apache-2.0
+- Published SHA-256: `74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db`
+- Direct download: https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
+
+The application must not bundle this model in the APK. Import it into app-private storage and compare its calculated SHA-256 with the published digest before loading. The GGUF metadata carries the model's chat template; the native bridge applies that template using the pinned llama.cpp chat-template API. A successful import or model load is not an inference proof: capture actual generated output on a physical ARM64 device.
