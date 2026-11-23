@@ -133,6 +133,7 @@ The current code now contains:
 - `AgentRuntime`: bounded model/tool loop, cancellation checks, input validation, capability enforcement, explicit approval callback, output truncation, and typed completion status.
 - `AgentActionParser`: strict JSON action envelope parser; accepts only string arguments and nested objects.
 - `AgentTaskLedger`: private append-only session/tool metadata with SHA-256 output digests; it deliberately does not persist prompts, raw file contents, or command output.
+- `WorkspaceEditorPanel`: SAF-backed project browser and UTF-8 source editor with bounded file size, binary-file rejection, and explicit save/close behavior.
 - `LocalLlamaAgentModel`: adapter from the current text-only JNI generation API to structured `tool` or `final` actions.
 - File tools for listing, reading, literal search, whole-file write, and exact unique-fragment replacement in a user-selected SAF document tree.
 - Change previews from file writes and blocked paths for common secret/credential filenames.
