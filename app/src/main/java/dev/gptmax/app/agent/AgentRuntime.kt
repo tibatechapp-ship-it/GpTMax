@@ -130,56 +130,29 @@ class AgentRuntime(
             }
 
             when (action) {
-                is AgentModelAction.FinalAnswer -> {
+                is AgentModelAction.FinalAnswer ->
                     return AgentRunResult(AgentRunStatus.COMPLETED, action.text, results, calls)
-                }
+
                 is AgentModelAction.CallTool -> {
                     calls++
-                    val call = action.call
-                    val tool = registry.get(call.name)
-                    val result = if (tool == null) {
-                        AgentToolResult(call.name, call.id, ToolExecutionStatus.DENIED, "Unknown tool.")
-                    } else {
-                        validateArguments(tool.spec, call)?.let { error ->
-                            AgentToolResult(call.name, call.id, ToolExecutionStatus.FAILURE, error)
-                        } ?: run {
-                            val initiallyApproved = call.id in approvedCallIds
-                            val needsApproval = ToolPermissionPolicy.decide(
-                                tool.spec.risk,
-                                grantedCapabilities,
-                                initiallyApproved,
-                            ) == ToolDecision.REQUIRE_USER_APPROVAL
-                            val approved = initiallyApproved || (needsApproval &&
-                                runCatching { approvalRequest(call, tool.spec) }.getOrDefault(false))
-                            when (ToolPermissionPolicy.decide(
-                                tool.spec.risk,
-                                grantedCapabilities,
-                                approved,
-                            )) {
-                            ToolDecision.DENY_MISSING_CAPABILITY ->
-                                AgentToolResult(call.name, call.id, ToolExecutionStatus.DENIED,
-                                    "Capability not granted for this task.")
-                            ToolDecision.REQUIRE_USER_APPROVAL ->
-                                AgentToolResult(call.name, call.id, ToolExecutionStatus.APPROVAL_REQUIRED,
-                                    "User approval required for this action.")
-                            ToolDecision.ALLOW -> try {
-                                withContext(Dispatchers.IO) { tool.execute(call, cancellation) }
-                            } catch (error: Exception) {
-                                AgentToolResult(call.name, call.id, ToolExecutionStatus.FAILURE,
-                                    "Tool failed: ${error.message ?: error.javaClass.simpleName}")
-                            }
-                        }
-                    }
+                    val result = executeToolCall(
+                        action.call,
+                        grantedCapabilities,
+                        approvedCallIds,
+                        cancellation,
+                        approvalRequest,
+                    )
                     results += result
                     runCatching { onToolResult(result) }
                     val safeOutput = result.output.take(limits.maxObservationChars)
                     observations += AgentObservation(
                         role = "tool",
-                        text = "Tool ${call.name} status=${result.status}\n$safeOutput",
+                        text = "Tool ${action.call.name} status=${result.status}\n$safeOutput",
                     )
                 }
             }
         }
+
         return AgentRunResult(
             AgentRunStatus.BUDGET_EXHAUSTED,
             "Tool-call budget reached; stopped to prevent an unbounded agent loop.",
@@ -188,11 +161,63 @@ class AgentRuntime(
         )
     }
 
+    private suspend fun executeToolCall(
+        call: AgentToolCall,
+        grantedCapabilities: Set<ToolRisk>,
+        approvedCallIds: Set<String>,
+        cancellation: AtomicBoolean,
+        approvalRequest: suspend (AgentToolCall, AgentToolSpec) -> Boolean,
+    ): AgentToolResult {
+        val tool = registry.get(call.name)
+            ?: return AgentToolResult(call.name, call.id, ToolExecutionStatus.DENIED, "Unknown tool.")
+        validateArguments(tool.spec, call)?.let { error ->
+            return AgentToolResult(call.name, call.id, ToolExecutionStatus.FAILURE, error)
+        }
+
+        val initiallyApproved = call.id in approvedCallIds
+        val initialDecision = ToolPermissionPolicy.decide(
+            tool.spec.risk,
+            grantedCapabilities,
+            initiallyApproved,
+        )
+        if (initialDecision == ToolDecision.DENY_MISSING_CAPABILITY) {
+            return AgentToolResult(
+                call.name,
+                call.id,
+                ToolExecutionStatus.DENIED,
+                "Capability not granted for this task.",
+            )
+        }
+
+        val approved = initiallyApproved || (
+            initialDecision == ToolDecision.REQUIRE_USER_APPROVAL &&
+                runCatching { approvalRequest(call, tool.spec) }.getOrDefault(false)
+            )
+        return when (ToolPermissionPolicy.decide(tool.spec.risk, grantedCapabilities, approved)) {
+            ToolDecision.DENY_MISSING_CAPABILITY ->
+                AgentToolResult(call.name, call.id, ToolExecutionStatus.DENIED,
+                    "Capability not granted for this task.")
+            ToolDecision.REQUIRE_USER_APPROVAL ->
+                AgentToolResult(call.name, call.id, ToolExecutionStatus.APPROVAL_REQUIRED,
+                    "User approval required for this action.")
+            ToolDecision.ALLOW -> try {
+                withContext(Dispatchers.IO) { tool.execute(call, cancellation) }
+            } catch (error: Exception) {
+                AgentToolResult(call.name, call.id, ToolExecutionStatus.FAILURE,
+                    "Tool failed: ${error.message ?: error.javaClass.simpleName}")
+            }
+        }
+    }
+
     private fun validateArguments(spec: AgentToolSpec, call: AgentToolCall): String? {
         if (call.id.isBlank() || call.id.length > 128) return "Invalid tool call id."
         if (!call.arguments.keys.containsAll(spec.requiredArguments)) return "Missing required tool arguments."
         if (call.arguments.keys.any { it !in spec.allowedArguments }) return "Unexpected tool argument."
-        if (call.arguments.any { (key, value) -> value.length > if (key == "content") 128 * 1024 else 16_000 }) return "Tool argument exceeds size limit."
+        if (call.arguments.any { (key, value) ->
+                value.length > (if (key == "content") 128 * 1024 else 16_000)
+            }) {
+            return "Tool argument exceeds size limit."
+        }
         return null
     }
 }
