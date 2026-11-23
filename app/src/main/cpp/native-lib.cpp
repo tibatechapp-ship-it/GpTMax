@@ -24,7 +24,6 @@ bool g_backend_initialized = false;
 
 void release_model_locked() {
     if (g_context != nullptr) {
-        llama_set_abort_callback(g_context, nullptr, nullptr);
         llama_free(g_context);
         g_context = nullptr;
     }
@@ -110,6 +109,18 @@ public:
     llama_batch & get() { return batch_; }
 private:
     llama_batch batch_;
+};
+
+class ScopedAbortCallback {
+public:
+    explicit ScopedAbortCallback(llama_context * context) : context_(context) {}
+    ~ScopedAbortCallback() {
+        if (context_ != nullptr) llama_set_abort_callback(context_, nullptr, nullptr);
+    }
+    ScopedAbortCallback(const ScopedAbortCallback &) = delete;
+    ScopedAbortCallback & operator=(const ScopedAbortCallback &) = delete;
+private:
+    llama_context * context_;
 };
 
 class ScopedLlamaSampler {
@@ -219,14 +230,14 @@ native_generate_impl(
     }
 
     llama_set_abort_callback(g_context, abort_requested, nullptr);
+    ScopedAbortCallback abort_callback_guard(g_context);
 
     const llama_vocab * vocab = llama_model_get_vocab(g_model);
     const int32_t prompt_size = static_cast<int32_t>(prompt.size());
     int32_t token_capacity = llama_tokenize(vocab, prompt.c_str(), prompt_size,
                                              nullptr, 0, true, false);
     if (token_capacity == std::numeric_limits<int32_t>::min()) {
-        llama_set_abort_callback(g_context, nullptr, nullptr);
-        return to_java_string(env, "Prompt tokenization overflow.");
+            return to_java_string(env, "Prompt tokenization overflow.");
     }
     if (token_capacity < 0) token_capacity = -token_capacity;
     if (token_capacity <= 0) {
@@ -379,10 +390,13 @@ Java_dev_gptmax_app_NativeBridge_nativeLoadModel(JNIEnv * env, jobject, jstring 
     try {
         return native_load_model_impl(env, model_path);
     } catch (const std::bad_alloc &) {
+        try { std::lock_guard<std::mutex> lock(g_mutex); release_model_locked(); } catch (...) {}
         return native_exception_result(env, "Native model load ran out of memory.");
     } catch (const std::exception &) {
+        try { std::lock_guard<std::mutex> lock(g_mutex); release_model_locked(); } catch (...) {}
         return native_exception_result(env, "Native model load failed unexpectedly.");
     } catch (...) {
+        try { std::lock_guard<std::mutex> lock(g_mutex); release_model_locked(); } catch (...) {}
         return native_exception_result(env, "Native model load failed with an unknown error.");
     }
 }
@@ -394,10 +408,22 @@ Java_dev_gptmax_app_NativeBridge_nativeGenerate(
     try {
         return native_generate_impl(env, prompt_text, requested_tokens, requested_temperature, callback);
     } catch (const std::bad_alloc &) {
+        try {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            if (g_context != nullptr) llama_set_abort_callback(g_context, nullptr, nullptr);
+        } catch (...) {}
         return native_exception_result(env, "Native generation ran out of memory.");
     } catch (const std::exception &) {
+        try {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            if (g_context != nullptr) llama_set_abort_callback(g_context, nullptr, nullptr);
+        } catch (...) {}
         return native_exception_result(env, "Native generation failed unexpectedly.");
     } catch (...) {
+        try {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            if (g_context != nullptr) llama_set_abort_callback(g_context, nullptr, nullptr);
+        } catch (...) {}
         return native_exception_result(env, "Native generation failed with an unknown error.");
     }
 }
