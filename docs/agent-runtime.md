@@ -132,6 +132,7 @@ The current code now contains:
 - `AgentToolSpec`, `AgentToolCall`, `AgentToolResult`, and a unique-name registry.
 - `AgentRuntime`: bounded model/tool loop, cancellation checks, input validation, capability enforcement, explicit approval callback, output truncation, and typed completion status.
 - `AgentActionParser`: strict JSON action envelope parser; accepts only string arguments and nested objects.
+- `AgentTaskLedger`: private append-only session/tool metadata with SHA-256 output digests; it deliberately does not persist prompts, raw file contents, or command output.
 - `LocalLlamaAgentModel`: adapter from the current text-only JNI generation API to structured `tool` or `final` actions.
 - File tools for listing, reading, literal search, whole-file write, and exact unique-fragment replacement in a user-selected SAF document tree.
 - Change previews from file writes and blocked paths for common secret/credential filenames.
@@ -158,5 +159,5 @@ The tool loop does not interpret free-form text as a command. Unknown tools, mis
 - The 0.5B smoke-test model may not reliably emit valid tool JSON or produce large code edits. Tool-loop support is an engineering capability, not a quality guarantee for that model.
 - SAF providers differ. Rename-based file replacement is attempted with a temporary document and backup, but provider-specific behavior requires device testing.
 - No Git diff/status or build/test adapter is connected to the SAF agent yet.
-- The agent currently runs one bounded session; persistent task ledger, resumable sessions, checkpoints, multi-agent delegation, and rollback are pending.
+- The agent currently runs one bounded session; resumable sessions, checkpoints, multi-agent delegation, and rollback are pending. The ledger is audit metadata only and does not restore a session.
 - Process execution is not granted to the selected-project agent; the managed process adapter remains separately gated until a safe project execution workspace/worker is implemented.
