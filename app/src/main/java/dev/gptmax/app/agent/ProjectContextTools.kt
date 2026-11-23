@@ -4,6 +4,10 @@ import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import java.util.concurrent.atomic.AtomicBoolean
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
+import java.nio.charset.StandardCharsets
 
 class DocumentTreeContextIndexTool(context:Context,treeUri:Uri,private val engine:ProjectContextEngine):AgentTool {
     private val appContext=context.applicationContext
@@ -42,7 +46,7 @@ class DocumentTreeContextIndexTool(context:Context,treeUri:Uri,private val engin
                 scanned++
                 val previous=engine.recordFor(path)
                 if(previous!=null&&previous.size==child.length()&&previous.modified==child.lastModified()){records+=previous;continue}
-                val content=runCatching{readDocument(appContext,child,MAX_BYTES)}.getOrNull()
+                val content=runCatching{readContextDocument(appContext,child,MAX_BYTES)}.getOrNull()
                 if(content==null){skipped++;previous?.let{records+=it};traversalComplete=false;continue}
                 records+=engine.createRecord(path,child.length(),child.lastModified(),content)
             }
@@ -114,4 +118,23 @@ class ProjectContextStageTool(private val engine:ProjectContextEngine):AgentTool
             call.arguments.getValue("status"),call.arguments["detail"].orEmpty())
         return AgentToolResult(spec.name,call.id,ToolExecutionStatus.SUCCESS,"Task stage saved.")
     }
+}
+
+private fun readContextDocument(context:Context,file:DocumentFile,limit:Int):String {
+    require(file.isFile&&file.length()<=limit){"Not a regular file or file exceeds the context limit."}
+    val bytes=ByteArrayOutputStream()
+    context.contentResolver.openInputStream(file.uri)?.use { input ->
+        val buffer=ByteArray(4096)
+        while(true) {
+            val count=input.read(buffer)
+            if(count<0)break
+            require(bytes.size()+count<=limit){"File exceeds the context read limit."}
+            bytes.write(buffer,0,count)
+        }
+    }?:throw IllegalStateException("Could not open SAF document.")
+    require(bytes.size()>0){"Empty document."}
+    return StandardCharsets.UTF_8.newDecoder()
+        .onMalformedInput(CodingErrorAction.REPORT)
+        .onUnmappableCharacter(CodingErrorAction.REPORT)
+        .decode(ByteBuffer.wrap(bytes.toByteArray())).toString()
 }
