@@ -1,0 +1,36 @@
+# Android / Gradle
+.gradle/
+**/build/
+local.properties
+*.iml
+.idea/
+
+# Native build outputs
+.cxx/
+.externalNativeBuild/
+*.so
+*.a
+*.o
+
+# Python / research
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local model assets (never commit large or licensed weights)
+models/
+*.gguf
+*.safetensors
+*.pt
+*.pth
+*.bin
+
+# OS / secrets
+.DS_Store
+.env
+.env.*
+!.env.example
