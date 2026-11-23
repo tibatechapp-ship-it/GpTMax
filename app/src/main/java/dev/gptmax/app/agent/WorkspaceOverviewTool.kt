@@ -6,9 +6,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Produces a bounded, read-only repository map without executing project code
  * or reading file contents. This is a safe first step for repository-wide tasks.
- *
- * Traversal filtering is delegated to [SensitivePathPolicy] so credential directories such as
- * `.ssh` or `.aws` are never even listed here.
  */
 class WorkspaceOverviewTool(private val root: File) : AgentTool {
     override val spec = AgentToolSpec(
@@ -47,7 +44,7 @@ class WorkspaceOverviewTool(private val root: File) : AgentTool {
             else {
                 val relative = directory.relativeTo(workspace).path
                 val depth = relative.split(File.separatorChar).size
-                depth < 4 && SensitivePathPolicy.isTraversalAllowedDirectoryName(directory.name)
+                depth < 4 && !SensitivePathPolicy.isCrawlBlockedDirectory(directory.name)
             }
         }.forEach { file ->
             if (cancellation.get()) return@forEach

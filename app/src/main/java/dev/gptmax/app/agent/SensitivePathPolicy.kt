@@ -1,88 +1,68 @@
 package dev.gptmax.app.agent
 
 /**
- * Single source of truth for which workspace paths the agent may traverse, read, search, index, or write.
+ * Single source of truth for which workspace paths the agent may reach.
  *
- * Every tool surface (direct read, list, search traversal, overview walk, context index, write) must route
- * its decisions through this object, so a path that is invisible to one tool is invisible to all of them.
- * Before this object existed, the direct-read blocklist, the search traversal list, the index crawl list,
- * and the overview walk list disagreed with each other, which let secret-bearing directories such as
- * `.ssh` or `.aws` be reached through search and index even though direct reads rejected them.
+ * Review finding #1: direct reads, search traversal, overview walks, and the context index each kept
+ * their own exclusion lists, and the lists disagreed: `.ssh` and `.aws` were blocked for direct reads
+ * but still crawled by file.search and context.index, so secrets could reach the model context
+ * indirectly. Every tool surface now routes its decisions through this object.
  */
-object SensitivePathPolicy {
+internal object SensitivePathPolicy {
 
-    /** Directories that must never be traversed, listed, read, searched, indexed, or written. */
-    val securityBlockedDirectories: Set<String> = setOf(
-        ".git", ".ssh", ".aws", ".gcloud", ".azure", ".gnupg",
-        ".gradle", "node_modules", ".gptmax",
+    /** Secret-bearing directories: never read, crawled, indexed, listed, or written, even by direct path. */
+    val forbiddenDirectories = setOf(
+        ".git", ".ssh", ".aws", ".gnupg", ".gptmax", ".azure", ".gcloud",
     )
 
-    /**
-     * Directories additionally skipped by wide traversals (search, overview, context index) because they
- * hold generated artifacts or IDE state. Direct path access to them stays allowed so a developer-driven
- * agent can still inspect a specific build output when explicitly asked.
-     */
-    val traversalNoiseDirectories: Set<String> = setOf(
-        "build", "dist", "target", ".next", ".idea", ".venv", "venv", "__pycache__",
-        ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    /** Generated or IDE-only directories: reachable via an explicit direct path, but never crawled. */
+    val crawlNoiseDirectories = setOf(
+        ".gradle", ".idea", "build", "dist", "target", ".next", "node_modules",
+        "venv", ".venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
     )
 
-    /** Exact file names blocked everywhere (case-insensitive). */
-    private val blockedExactFileNames: Set<String> = setOf(
-        ".npmrc", ".netrc", ".git-credentials", ".htpasswd", ".pgpass", ".dockercfg",
+    /** Exact secret file names (case-insensitive). */
+    private val forbiddenFileNames = setOf(
+        ".env", ".npmrc", ".netrc", ".git-credentials", ".htpasswd", ".pgpass", ".docker",
         "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa",
         "known_hosts", "authorized_keys",
         "credentials.json", "credentials.yaml", "secrets.json", "secrets.yaml", "secrets.properties",
-        "keystore.jks", "service-account.json", "terraform.tfvars", ".terraformrc",
+        "keystore.jks", "keystore", "service-account.json", "terraform.tfvars",
     )
 
-    /** Any file whose lower-cased name starts with one of these prefixes is blocked.
-     *  Covers `.env`, `.env.local`, `.env.production`, `.env.development`, `.env.staging`, `.envrc`, ... */
-    private val blockedNamePrefixes: List<String> = listOf(".env")
+    /** Name prefixes treated as secrets: any `.env*` variant (`.env.local`, `.env.production`, ...). */
+    private val forbiddenNamePrefixes = listOf(".env")
 
-    /** File extensions blocked everywhere (case-insensitive). */
-    private val blockedExtensions: List<String> = listOf(
-        ".pem", ".p12", ".pfx", ".key", ".jks", ".keystore", ".kdbx", ".mobileprovision",
-    )
+    /** Extensions that are keys, certificates, or keystores. */
+    private val forbiddenExtensions = listOf(".pem", ".p12", ".pfx", ".key", ".jks", ".keystore", ".kdbx")
 
-    /** True when the agent may read, search, index, or write a file with this name. */
-    fun isAllowedFileName(name: String): Boolean {
+    fun isForbiddenFileName(name: String): Boolean {
         val lower = name.lowercase()
-        if (lower.isBlank()) return false
-        if (lower in blockedExactFileNames) return false
-        if (blockedNamePrefixes.any { lower.startsWith(it) }) return false
-        if (blockedExtensions.any { lower.endsWith(it) }) return false
-        return true
+        if (lower in forbiddenFileNames) return true
+        if (forbiddenNamePrefixes.any { lower.startsWith(it) }) return true
+        if (forbiddenExtensions.any { lower.endsWith(it) }) return true
+        return false
     }
 
-    /** True when the agent may access anything inside a directory with this name via an explicit path. */
-    fun isAllowedDirectoryName(name: String): Boolean = name.lowercase() !in securityBlockedDirectories
+    fun isForbiddenDirectory(name: String): Boolean = name.lowercase() in forbiddenDirectories
 
-    /** Directory filter for wide traversals: security blocklist plus generated/IDE noise. */
-    fun isTraversalAllowedDirectoryName(name: String): Boolean =
-        isAllowedDirectoryName(name) && name.lowercase() !in traversalNoiseDirectories
+    /** Directory filter for search, index, and overview traversals. */
+    fun isCrawlBlockedDirectory(name: String): Boolean =
+        isForbiddenDirectory(name) || name.lowercase() in crawlNoiseDirectories
 
-    /**
-     * Validates a relative workspace path and returns its segments.
-     * Throws [IllegalArgumentException] when the path is absolute, escapes the workspace, crosses a
-     * blocked directory, or targets a blocked file name.
-     */
+    /** Validates a relative workspace path; throws IllegalArgumentException when it is unsafe. */
     fun validateRelativePath(path: String): List<String> {
         require(path.isNotBlank()) { "Path is required." }
-        require(!path.startsWith("/") && !path.startsWith("\\")) {
-            "Absolute paths are not allowed."
-        }
+        require(!path.startsWith("/") && !path.startsWith("\\")) { "Absolute paths are not allowed." }
         val parts = path.split('/', '\\')
         require(parts.none { it.isBlank() || it == "." || it == ".." }) {
             "Path traversal or empty path segment is not allowed."
         }
-        val blockedDir = parts.firstOrNull { !isAllowedDirectoryName(it) }
+        val blockedDir = parts.firstOrNull { isForbiddenDirectory(it) }
         require(blockedDir == null) {
-            "Access to credential, VCS metadata, and generated dependency directories is blocked: $blockedDir"
+            "Access to credential, VCS metadata, and secret directories is blocked: $blockedDir"
         }
-        require(isAllowedFileName(parts.last())) {
-            "Credential and secret files are blocked."
-        }
+        require(!isForbiddenFileName(parts.last())) { "Credential and secret files are blocked." }
         return parts
     }
 }

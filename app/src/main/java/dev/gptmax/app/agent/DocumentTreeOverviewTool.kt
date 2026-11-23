@@ -5,11 +5,7 @@ import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** SAF-backed bounded project map. It reads names/metadata only and never executes project code.
- *
- * Traversal filtering is delegated to [SensitivePathPolicy] so credential directories such as
- * `.ssh` or `.aws` are never listed in the overview tree.
- */
+/** SAF-backed bounded project map. It reads names/metadata only and never executes project code. */
 class DocumentTreeOverviewTool(context: Context, treeUri: Uri) : AgentTool {
     private val root = DocumentFile.fromTreeUri(context.applicationContext, treeUri)
         ?: throw IllegalArgumentException("Invalid workspace folder.")
@@ -49,14 +45,14 @@ class DocumentTreeOverviewTool(context: Context, treeUri: Uri) : AgentTool {
                     return
                 }
                 val name = item.name ?: continue
-                if (item.isDirectory && !SensitivePathPolicy.isTraversalAllowedDirectoryName(name)) continue
+                if (item.isDirectory && SensitivePathPolicy.isCrawlBlockedDirectory(name)) continue
                 visited++
                 val relative = if (prefix.isEmpty()) name else "$prefix/$name"
                 if (relative.count { it == '/' } < MAX_TREE_DEPTH) {
                     tree += relative + if (item.isDirectory) "/" else ""
                 }
                 if (item.isFile) {
-                    if (name in important && SensitivePathPolicy.isAllowedFileName(name)) manifests += relative
+                    if (name in important && !SensitivePathPolicy.isForbiddenFileName(name)) manifests += relative
                     val segments = relative.split('/')
                     if (segments.any { it.equals("src", true) || it.equals("app", true) || it.equals("lib", true) || it.equals("main", true) }) {
                         sourceRoots += segments.first()

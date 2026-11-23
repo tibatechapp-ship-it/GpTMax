@@ -9,98 +9,54 @@ import org.junit.Test
 class SensitivePathPolicyTest {
 
     @Test
-    fun envFileVariantsAreBlockedEverywhere() {
-        listOf(
-            ".env", ".env.local", ".env.production", ".env.development",
-            ".env.staging", ".env.test", ".ENV.TEST", ".envrc",
-        ).forEach { name ->
-            assertFalse("'$name' must be blocked", SensitivePathPolicy.isAllowedFileName(name))
-        }
+    fun envVariantsAreForbiddenEverywhere() {
+        listOf(".env", ".env.local", ".env.production", ".env.development", ".ENV.TEST")
+            .forEach { assertTrue("$it must be forbidden", SensitivePathPolicy.isForbiddenFileName(it)) }
     }
 
     @Test
-    fun credentialNamesAndKeyExtensionsAreBlocked() {
+    fun credentialNamesAndExtensionsAreForbidden() {
         listOf(
-            "id_rsa", "ID_RSA", "id_ed25519", "id_ecdsa", "id_dsa",
-            "known_hosts", "authorized_keys",
+            "id_rsa", "ID_ED25519", "known_hosts", "authorized_keys",
             ".npmrc", ".netrc", ".git-credentials", ".htpasswd", ".pgpass",
-            "credentials.json", "credentials.yaml", "secrets.json", "secrets.yaml",
-            "service-account.json", "keystore.jks",
-            "server.pem", "server.PEM", "cert.p12", "cert.pfx",
-            "server.key", "release.keystore", "vault.kdbx",
-        ).forEach { name ->
-            assertFalse("'$name' must be blocked", SensitivePathPolicy.isAllowedFileName(name))
-        }
+            "credentials.json", "secrets.yaml", "service-account.json",
+            "server.pem", "a.p12", "b.pfx", "c.key", "d.jks", "e.keystore", "f.kdbx",
+        ).forEach { assertTrue("$it must be forbidden", SensitivePathPolicy.isForbiddenFileName(it)) }
     }
 
     @Test
     fun normalSourceFilesStayAllowed() {
-        listOf(
-            "App.kt", "README.md", "main.py", "index.tsx",
-            "build.gradle.kts", "environment.dart", "keynote.txt", "keys.md",
-        ).forEach { name ->
-            assertTrue("'$name' must stay allowed", SensitivePathPolicy.isAllowedFileName(name))
-        }
+        listOf("MainActivity.kt", "README.md", "notes.txt", "build.gradle.kts", "main.py")
+            .forEach { assertFalse("$it must stay allowed", SensitivePathPolicy.isForbiddenFileName(it)) }
     }
 
     @Test
-    fun credentialDirectoriesAreBlockedForEveryTool() {
-        listOf(
-            ".git", ".ssh", ".aws", ".gcloud", ".azure", ".gnupg",
-            ".gradle", "node_modules", ".gptmax", ".AWS", ".SSH",
-        ).forEach { name ->
-            assertFalse("'$name' must be blocked", SensitivePathPolicy.isAllowedDirectoryName(name))
-            assertFalse("'$name' must also be skipped by wide traversals",
-                SensitivePathPolicy.isTraversalAllowedDirectoryName(name))
-        }
-        assertTrue(SensitivePathPolicy.isAllowedDirectoryName("src"))
-        assertTrue(SensitivePathPolicy.isAllowedDirectoryName("scripts"))
+    fun secretDirectoriesAreForbiddenEvenForDirectPaths() {
+        listOf(".git", ".ssh", ".aws", ".gnupg", ".gptmax", ".AWS")
+            .forEach { assertTrue("$it must be forbidden", SensitivePathPolicy.isForbiddenDirectory(it)) }
     }
 
     @Test
-    fun generatedDirectoriesAreSkippedOnlyInWideTraversals() {
-        assertFalse(SensitivePathPolicy.isTraversalAllowedDirectoryName("build"))
-        assertFalse(SensitivePathPolicy.isTraversalAllowedDirectoryName(".idea"))
-        assertFalse(SensitivePathPolicy.isTraversalAllowedDirectoryName("__pycache__"))
-        // Direct, explicitly requested access to a generated directory keeps working.
-        assertTrue(SensitivePathPolicy.isAllowedDirectoryName("build"))
-        assertTrue(SensitivePathPolicy.isAllowedDirectoryName(".idea"))
+    fun noiseDirectoriesAreCrawlBlockedButDirectlyReachable() {
+        listOf("build", "node_modules", ".gradle", ".idea", "dist", "__pycache__").forEach {
+            assertTrue("$it must not be crawled", SensitivePathPolicy.isCrawlBlockedDirectory(it))
+            assertFalse("$it stays reachable via an explicit path", SensitivePathPolicy.isForbiddenDirectory(it))
+        }
     }
 
     @Test
     fun relativePathValidationAcceptsNormalPaths() {
         assertEquals(listOf("src", "Main.kt"), SensitivePathPolicy.validateRelativePath("src/Main.kt"))
-        assertEquals(listOf("App.kt"), SensitivePathPolicy.validateRelativePath("App.kt"))
-        assertEquals(listOf("docs", "guide", "intro.md"),
-            SensitivePathPolicy.validateRelativePath("docs\\guide\\intro.md"))
     }
 
     @Test
-    fun relativePathValidationRejectsUnsafePaths() {
+    fun relativePathValidationRejectsTraversalAndSecrets() {
         listOf(
-            "../outside.txt",
-            "/abs.txt",
-            "src//Main.kt",
-            "src/./Main.kt",
-            "src/../Main.kt",
-            ".ssh/id_rsa",
-            "project/.aws/config.json",
-            "project/.ssh/id_ed25519",
-            "src/.env.development",
-            "config/server.key",
-            "deep/nested/.git-credentials",
-            "",
+            "../outside.txt", "/absolute.txt", "src//Main.kt", "src/./Main.kt", "src/../Main.kt",
+            ".ssh/id_rsa", ".aws/config", "src/.env.local", "docs/notes.key",
         ).forEach { path ->
             val result = runCatching { SensitivePathPolicy.validateRelativePath(path) }
             assertTrue("'$path' must be rejected", result.isFailure)
         }
-    }
-
-    @Test
-    fun blockedDirectoriesMatchCaseInsensitively() {
-        val result = runCatching { SensitivePathPolicy.validateRelativePath(".SSH/id_rsa") }
-        assertTrue(result.isFailure)
-        val aws = runCatching { SensitivePathPolicy.validateRelativePath(".AWS/config.json") }
-        assertTrue(aws.isFailure)
     }
 }

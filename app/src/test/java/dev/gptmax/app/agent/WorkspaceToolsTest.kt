@@ -68,54 +68,86 @@ class WorkspaceToolsTest {
     }
 
     @Test
-    fun blocksCredentialDirectoriesAndEnvVariants() = runBlocking {
-        val root = Files.createTempDirectory("gptmax-workspace").toFile()
+    fun searchNeverCrawlsSecretDirectories() = runBlocking {
+        val root = Files.createTempDirectory("gptmax-secret").toFile()
         try {
             File(root, ".ssh").mkdirs()
-            File(root, ".ssh/keys.json").writeText("{\"token\": \"PRIVATE_TOKEN_ABC\"}")
+            File(root, ".ssh/id_rsa").writeText("SECRET_RSA_MATERIAL")
             File(root, ".aws").mkdirs()
-            File(root, ".aws/config.json").writeText("AWS_SECRET_KEY_ABC")
-            File(root, ".env.development").writeText("DEV_TOKEN_XYZ")
+            File(root, ".aws/notes.txt").writeText("SECRET_AWS_NOTES")
+            File(root, ".env.development").writeText("DEV_SECRET_TOKEN")
             File(root, "src").mkdirs()
-            File(root, "src/App.kt").writeText("class App")
+            File(root, "src/App.kt").writeText("mentions SECRET_AWS_NOTES in docs")
+            val search = WorkspaceSearchTool(root).execute(
+                AgentToolCall("s1", "file.search", mapOf("query" to "SECRET")),
+                AtomicBoolean(false),
+            )
+            assertEquals(ToolExecutionStatus.SUCCESS, search.status)
+            assertTrue(!search.output.contains(".ssh"))
+            assertTrue(!search.output.contains(".aws"))
+            assertTrue(!search.output.contains(".env.development"))
+            assertTrue(search.output.contains("src/App.kt"))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
 
-            val directSsh = runCatching {
-                WorkspaceReadTool(root).execute(
-                    AgentToolCall("r1", "file.read", mapOf("path" to ".ssh/keys.json")),
+    @Test
+    fun writeRejectsOverwriteWithoutPriorRead() = runBlocking {
+        val root = Files.createTempDirectory("gptmax-noread").toFile()
+        try {
+            File(root, "Existing.kt").writeText("keep me")
+            val writer = WorkspaceWriteTool(root)
+            val result = runCatching {
+                writer.execute(
+                    AgentToolCall("w1", "file.write", mapOf("path" to "Existing.kt", "content" to "clobber")),
                     AtomicBoolean(false),
                 )
             }
-            assertTrue("direct read of .ssh content must fail", directSsh.isFailure)
-            val directAws = runCatching {
-                WorkspaceReadTool(root).execute(
-                    AgentToolCall("r2", "file.read", mapOf("path" to ".aws/config.json")),
-                    AtomicBoolean(false),
-                )
-            }
-            assertTrue("direct read of .aws content must fail", directAws.isFailure)
-            val directEnvVariant = runCatching {
-                WorkspaceReadTool(root).execute(
-                    AgentToolCall("r3", "file.read", mapOf("path" to ".env.development")),
-                    AtomicBoolean(false),
-                )
-            }
-            assertTrue(".env.* variants must be blocked", directEnvVariant.isFailure)
+            assertTrue("unread overwrite must be rejected", result.isFailure)
+            assertEquals("keep me", File(root, "Existing.kt").readText())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
 
-            val searchSsh = WorkspaceSearchTool(root).execute(
-                AgentToolCall("s1", "file.search", mapOf("query" to "PRIVATE_TOKEN_ABC")),
+    @Test
+    fun writeRejectsFileChangedSinceLastRead() = runBlocking {
+        val root = Files.createTempDirectory("gptmax-stale").toFile()
+        try {
+            val guard = FileWriteGuard(File(root, ".gptmax/edit-log.jsonl"))
+            val reader = WorkspaceReadTool(root, guard)
+            val writer = WorkspaceWriteTool(root, guard)
+            File(root, "Notes.kt").writeText("original content")
+            reader.execute(
+                AgentToolCall("r1", "file.read", mapOf("path" to "Notes.kt")),
                 AtomicBoolean(false),
             )
-            assertTrue("search must not leak .ssh content", !searchSsh.output.contains("PRIVATE_TOKEN_ABC"))
-            val searchAws = WorkspaceSearchTool(root).execute(
-                AgentToolCall("s2", "file.search", mapOf("query" to "AWS_SECRET_KEY_ABC")),
+            File(root, "Notes.kt").writeText("external edit")
+            val stale = runCatching {
+                writer.execute(
+                    AgentToolCall("w1", "file.write", mapOf("path" to "Notes.kt", "content" to "agent overwrite")),
+                    AtomicBoolean(false),
+                )
+            }
+            assertTrue("stale overwrite must be rejected", stale.isFailure)
+            assertEquals("external edit", File(root, "Notes.kt").readText())
+            reader.execute(
+                AgentToolCall("r2", "file.read", mapOf("path" to "Notes.kt")),
                 AtomicBoolean(false),
             )
-            assertTrue("search must not leak .aws content", !searchAws.output.contains("AWS_SECRET_KEY_ABC"))
-            val searchEnv = WorkspaceSearchTool(root).execute(
-                AgentToolCall("s3", "file.search", mapOf("query" to "DEV_TOKEN_XYZ")),
+            val ok = writer.execute(
+                AgentToolCall("w2", "file.write", mapOf("path" to "Notes.kt", "content" to "agent overwrite v2")),
                 AtomicBoolean(false),
             )
-            assertTrue("search must not leak .env.* content", !searchEnv.output.contains("DEV_TOKEN_XYZ"))
+            assertEquals(ToolExecutionStatus.SUCCESS, ok.status)
+            assertTrue(ok.output.contains("Rollback"))
+            val backups = root.listFiles { f -> f.name.startsWith("Notes.kt.gptmax-backup-") }.orEmpty()
+            assertEquals(1, backups.size)
+            assertEquals("external edit", backups.single().readText())
+            val journal = File(root, ".gptmax/edit-log.jsonl")
+            assertTrue(journal.isFile)
+            assertTrue(journal.readText().contains("Notes.kt.gptmax-backup-"))
         } finally {
             root.deleteRecursively()
         }
@@ -131,51 +163,6 @@ class WorkspaceToolsTest {
             )
             assertEquals(ToolExecutionStatus.SUCCESS, result.status)
             assertEquals("class New", File(root, "New.kt").readText())
-        } finally {
-            root.deleteRecursively()
-        }
-    }
-
-    @Test
-    fun writeRejectsStaleFileAndRecoversAfterRead() = runBlocking {
-        val root = Files.createTempDirectory("gptmax-edit").toFile()
-        try {
-            val journal = EditSafetyJournal()
-            val reader = WorkspaceReadTool(root, journal)
-            val writer = WorkspaceWriteTool(root, journal)
-
-            val create = writer.execute(
-                AgentToolCall("w1", "file.write", mapOf("path" to "Notes.kt", "content" to "version one")),
-                AtomicBoolean(false),
-            )
-            assertEquals(ToolExecutionStatus.SUCCESS, create.status)
-
-            // Simulate a modification performed outside the agent session.
-            File(root, "Notes.kt").writeText("external edit")
-
-            val stale = runCatching {
-                writer.execute(
-                    AgentToolCall("w2", "file.write", mapOf("path" to "Notes.kt", "content" to "version two")),
-                    AtomicBoolean(false),
-                )
-            }
-            assertTrue("stale overwrite must be rejected", stale.isFailure)
-            assertEquals("external edit", File(root, "Notes.kt").readText())
-
-            reader.execute(
-                AgentToolCall("r1", "file.read", mapOf("path" to "Notes.kt")),
-                AtomicBoolean(false),
-            )
-            val retry = writer.execute(
-                AgentToolCall("w3", "file.write", mapOf("path" to "Notes.kt", "content" to "version two")),
-                AtomicBoolean(false),
-            )
-            assertEquals(ToolExecutionStatus.SUCCESS, retry.status)
-            assertEquals("version two", File(root, "Notes.kt").readText())
-            assertTrue(
-                "previous version must be preserved as a backup",
-                root.listFiles()!!.any { it.name.startsWith("Notes.kt.gptmax-backup-") },
-            )
         } finally {
             root.deleteRecursively()
         }

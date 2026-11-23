@@ -34,13 +34,11 @@ class DocumentTreeContextIndexTool(context:Context,treeUri:Uri,private val engin
                 val name=child.name.orEmpty()
                 if(name.isBlank()) {skipped++;traversalComplete=false;continue}
                 if(child.isDirectory) {
-                    // SensitivePathPolicy is the single blocklist: credential directories such as
-                    // .ssh/.aws/.gcloud can never be crawled into the local context index.
-                    if(SensitivePathPolicy.isTraversalAllowedDirectoryName(name)&&prefix.count{it=='/'}<MAX_DEPTH) queue.add(child to (if(prefix.isEmpty()) name else "$prefix/$name"))
+                    if(!SensitivePathPolicy.isCrawlBlockedDirectory(name)&&prefix.count{it=='/'}<MAX_DEPTH) queue.add(child to (if(prefix.isEmpty()) name else "$prefix/$name"))
                     else skipped++
                     continue
                 }
-                if(!child.isFile||!SensitivePathPolicy.isAllowedFileName(name)||
+                if(!child.isFile||SensitivePathPolicy.isForbiddenFileName(name)||
                     name.substringAfterLast('.', "").lowercase() !in allowed||child.length() !in 1..MAX_BYTES.toLong()) {skipped++;continue}
                 val path=if(prefix.isEmpty())name else "$prefix/$name"
                 scanned++

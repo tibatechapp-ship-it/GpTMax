@@ -1,7 +1,6 @@
 package dev.gptmax.app.agent
 
 import java.io.File
-import java.nio.charset.Charset
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -9,12 +8,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * All path and file-name safety decisions are delegated to [SensitivePathPolicy] so the file-based
  * tools and the SAF (document tree) tools enforce exactly the same rules. Write operations are
- * guarded by a shared [EditSafetyJournal]: existing files must be read in the current session before
+ * guarded by a shared [FileWriteGuard]: existing files must be read in the current session before
  * they can be overwritten, external modifications are detected through content fingerprints, and the
  * previous version is preserved as a timestamped backup instead of being deleted immediately.
  */
 
-internal fun isSensitiveFile(file: File): Boolean = !SensitivePathPolicy.isAllowedFileName(file.name)
+internal fun isSensitiveFile(file: File): Boolean = SensitivePathPolicy.isForbiddenFileName(file.name)
 
 internal fun safeWorkspaceFile(root: File, relativePath: String): File {
     SensitivePathPolicy.validateRelativePath(relativePath)
@@ -26,14 +25,13 @@ internal fun safeWorkspaceFile(root: File, relativePath: String): File {
     return candidate
 }
 
-private const val MAX_BACKUPS_PER_FILE = 3
-private const val FINGERPRINT_SIZE_LIMIT_BYTES = 4 * 1024 * 1024
+internal fun backupFileName(name: String): String =
+    "$name.gptmax-backup-${System.currentTimeMillis()}-${Integer.toHexString((System.nanoTime() and 0xFFFF).toInt())}"
 
-/** Keeps at most [keep] timestamped backups per file, deleting the oldest ones. Never throws. */
-internal fun pruneOldBackups(directory: File, fileName: String, keep: Int = MAX_BACKUPS_PER_FILE) {
+internal fun pruneOldFileBackups(parent: File, name: String, keep: Int = 3) {
     runCatching {
-        val prefix = "$fileName.gptmax-backup-"
-        directory.listFiles { file -> file.name.startsWith(prefix) }
+        val prefix = "$name.gptmax-backup-"
+        parent.listFiles { file -> file.name.startsWith(prefix) }
             ?.sortedByDescending { it.name }
             ?.drop(keep)
             ?.forEach { it.delete() }
@@ -66,7 +64,7 @@ class WorkspaceListTool(private val root: File) : AgentTool {
 
 class WorkspaceReadTool(
     private val root: File,
-    private val journal: EditSafetyJournal = EditSafetyJournal(),
+    private val guard: FileWriteGuard = FileWriteGuard(),
 ) : AgentTool {
     override val spec = AgentToolSpec(
         name = "file.read",
@@ -86,7 +84,7 @@ class WorkspaceReadTool(
         val bytes = file.readBytes()
         val text = bytes.toString(Charsets.UTF_8)
         require(!text.contains('\u0000')) { "Binary files are not supported by file.read." }
-        journal.recordRead(relativePath, ContentFingerprints.sha256(text))
+        guard.recordRead(relativePath, ContentFingerprints.sha256(text))
         return AgentToolResult(spec.name, call.id, ToolExecutionStatus.SUCCESS, text, elapsed(start))
     }
 }
@@ -112,13 +110,13 @@ class WorkspaceSearchTool(private val root: File) : AgentTool {
         var scanned = 0
         base.walkTopDown().onEnter { directory ->
             !cancellation.get() &&
-                (directory == root.canonicalFile || SensitivePathPolicy.isTraversalAllowedDirectoryName(directory.name))
+                (directory == root.canonicalFile || !SensitivePathPolicy.isCrawlBlockedDirectory(directory.name))
         }.forEach { file ->
             if (cancellation.get() || scanned >= 300 || matches.size >= 100) return@forEach
             if (!file.isFile || isSensitiveFile(file) || file.length() > 128 * 1024) return@forEach
             if (!runCatching { file.canonicalPath.startsWith(root.canonicalPath + File.separator) }.getOrDefault(false)) return@forEach
             scanned++
-            val content = runCatching { file.readText(Charset.forName("UTF-8")) }.getOrNull() ?: return@forEach
+            val content = runCatching { file.readText(Charsets.UTF_8) }.getOrNull() ?: return@forEach
             if (content.contains('\u0000')) return@forEach
             content.lineSequence().forEachIndexed { line, value ->
                 if (matches.size < 100 && value.contains(query, ignoreCase = true)) {
@@ -135,7 +133,7 @@ class WorkspaceSearchTool(private val root: File) : AgentTool {
 
 class WorkspaceWriteTool(
     private val root: File,
-    private val journal: EditSafetyJournal = EditSafetyJournal(),
+    private val guard: FileWriteGuard = FileWriteGuard(File(root, ".gptmax/edit-log.jsonl")),
 ) : AgentTool {
     override val spec = AgentToolSpec(
         name = "file.write",
@@ -154,63 +152,61 @@ class WorkspaceWriteTool(
         val content = call.arguments.getValue("content")
         require(content.length <= 128 * 1024) { "File content exceeds 128 KiB limit." }
         require(!content.contains('\u0000')) { "Binary content is not supported." }
-        val parent = file.parentFile ?: throw IllegalStateException("File has no parent directory.")
-        require(parent.isDirectory) { "Parent directory must already exist." }
+        require(file.parentFile?.isDirectory == true) { "Parent directory must already exist." }
+        val workspacePath = file.relativeTo(root.canonicalFile).invariantSeparatorsPath
         val fileExists = file.exists()
-        require(!fileExists || file.isFile) { "Target is not a regular file." }
-        if (fileExists) {
-            require(file.length() <= FINGERPRINT_SIZE_LIMIT_BYTES) {
-                "Existing file is too large to fingerprint safely; refusing to overwrite."
-            }
-        }
+        if (fileExists) require(file.isFile) { "Target is not a regular file." }
         val currentFingerprint = if (fileExists) {
-            ContentFingerprints.sha256(file.readText(Charsets.UTF_8))
+            runCatching { ContentFingerprints.sha256(file.readText(Charsets.UTF_8)) }.getOrNull()
         } else null
-        val decision = journal.checkWrite(relativePath, currentFingerprint, fileExists)
-        if (decision is EditSafetyJournal.WriteDecision.Blocked) throw IllegalStateException(decision.reason)
+        val check = guard.checkWrite(workspacePath, fileExists, currentFingerprint)
+        if (check is FileWriteGuard.WriteCheck.Stale) throw IllegalStateException(check.reason)
 
-        val temp = File(parent, file.name + ".gptmax-tmp-" + System.nanoTime())
-        val backup = if (fileExists) File(parent, file.name + ".gptmax-backup-" + System.nanoTime()) else null
-        var succeeded = false
+        val temp = File(file.parentFile, file.name + ".gptmax-tmp-" + System.nanoTime())
+        var backupName: String? = null
         try {
             temp.writeText(content, Charsets.UTF_8)
             if (cancellation.get()) {
                 temp.delete()
                 return AgentToolResult(spec.name, call.id, ToolExecutionStatus.CANCELLED, "Cancelled.")
             }
-            if (backup != null) {
-                require(file.renameTo(backup)) { "Could not preserve the previous version for rollback." }
+            if (fileExists) {
+                backupName = backupFileName(file.name)
+                require(file.renameTo(File(file.parentFile, backupName))) {
+                    "Could not preserve the previous version for rollback."
+                }
             }
             if (!temp.renameTo(file)) {
-                if (backup != null && backup.exists()) runCatching { backup.renameTo(file) }
-                throw IllegalStateException("Atomic file replacement failed; the previous version was restored.")
+                if (backupName != null) File(file.parentFile, backupName).renameTo(file)
+                throw IllegalStateException("Atomic file replacement failed.")
             }
-            journal.recordWrite(relativePath, ContentFingerprints.sha256(content), backup?.name)
-            succeeded = true
-            pruneOldBackups(parent, file.name)
-            val rollbackHint = backup?.let { " Previous version kept as ${it.name} for manual rollback." } ?: ""
-            return AgentToolResult(spec.name, call.id, ToolExecutionStatus.SUCCESS,
-                "Wrote ${content.length} characters to ${file.relativeTo(root.canonicalFile).path}.$rollbackHint",
-                elapsed(start))
-        } catch (failure: Exception) {
-            if (!succeeded) journal.recordFailedWrite(relativePath, backup?.name)
-            throw failure
+            val newFingerprint = ContentFingerprints.sha256(content)
+            guard.recordWrite(workspacePath, newFingerprint)
+            guard.appendJournal(
+                "{\"ts\":${System.currentTimeMillis()},\"tool\":\"file.write\",\"path\":\"${jsonEscape(workspacePath)}\",\"backup\":${
+                    backupName?.let { "\"${jsonEscape(it)}\"" } ?: "null"
+                },\"oldSha\":${currentFingerprint?.let { "\"$it\"" } ?: "null"},\"newSha\":\"$newFingerprint\"}",
+            )
+            pruneOldFileBackups(file.parentFile!!, file.name)
         } finally {
             if (temp.exists()) temp.delete()
         }
+        val rollbackNote = backupName?.let { " Rollback: previous version kept as $it." } ?: ""
+        return AgentToolResult(spec.name, call.id, ToolExecutionStatus.SUCCESS,
+            "Wrote ${content.length} characters to $workspacePath.$rollbackNote", elapsed(start))
     }
 }
 
 fun createWorkspaceToolRegistry(root: File): AgentToolRegistry {
-    val journal = EditSafetyJournal()
+    val guard = FileWriteGuard(File(root, ".gptmax/edit-log.jsonl"))
     return AgentToolRegistry(
         listOf(
             WorkspaceOverviewTool(root),
             GitWorkspaceTool(root),
             WorkspaceListTool(root),
-            WorkspaceReadTool(root, journal),
+            WorkspaceReadTool(root, guard),
             WorkspaceSearchTool(root),
-            WorkspaceWriteTool(root, journal),
+            WorkspaceWriteTool(root, guard),
             ManagedProcessTool(root),
         ),
     )
