@@ -307,7 +307,7 @@ native_generate_impl(
     }
 
     std::vector<llama_token> prompt_tokens(static_cast<size_t>(token_capacity));
-    const int32_t actual_tokens = llama_tokenize(vocab, prompt.c_str(), prompt_size,
+    const int32_t actual_tokens = llama_tokenize(vocab, formatted_prompt.c_str(), prompt_size,
             prompt_tokens.data(), token_capacity, true, false);
     if (actual_tokens <= 0 || actual_tokens > token_capacity) {
         llama_set_abort_callback(g_context, nullptr, nullptr);
