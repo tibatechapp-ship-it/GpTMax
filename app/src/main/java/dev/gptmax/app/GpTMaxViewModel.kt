@@ -115,6 +115,7 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
     fun generate() {
         val snapshot = mutableState.value
         if (snapshot.isBusy || snapshot.isGenerating || !snapshot.modelReady || snapshot.prompt.isBlank()) return
+        NativeBridge.nativeBeginGeneration()
         mutableState.update {
             it.copy(generatedText = "", isGenerating = true, nativeStatus = "Generating locally…")
         }
