@@ -6,8 +6,8 @@ import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicBoolean
 
 private val blockedNames = setOf(
-    ".env", ".env.local", ".env.production", "id_rsa", "id_ed25519",
-    "credentials.json", "secrets.json", "keystore.jks",
+    ".env", ".env.local", ".env.production", ".npmrc", ".netrc", ".git-credentials",
+    "id_rsa", "id_ed25519", "credentials.json", "secrets.json", "keystore.jks",
 )
 
 private fun isSensitiveFile(file: File): Boolean =
@@ -21,8 +21,12 @@ internal fun safeWorkspaceFile(root: File, relativePath: String): File {
     require(!relativePath.startsWith("/") && !relativePath.startsWith("\\")) {
         "Absolute paths are not allowed."
     }
-    require(relativePath.split('/', '\\').none { it == ".." || it.isBlank() }) {
+    val segments = relativePath.split('/', '\\')
+    require(segments.none { it == ".." || it.isBlank() }) {
         "Path traversal or empty path segment is not allowed."
+    }
+    require(segments.none { it.lowercase() in setOf(".git", ".ssh", ".aws", ".gradle", "node_modules") }) {
+        "Access to credential, VCS metadata, and generated dependency directories is blocked."
     }
     val canonicalRoot = root.canonicalFile
     val candidate = File(canonicalRoot, relativePath).canonicalFile
