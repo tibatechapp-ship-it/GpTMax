@@ -20,7 +20,7 @@ internal data class ImportedModel(
 )
 
 internal object ModelFileImporter {
-    suspend fun import(context: Context, uri: Uri): ImportedModel = withContext(Dispatchers.IO) {
+    suspend fun import(context: Context, uri: Uri, expectedSha256: String? = null): ImportedModel = withContext(Dispatchers.IO) {
         val metadata = queryMetadata(context, uri)
         val expectedSize = metadata.second
         require(metadata.first.endsWith(".gguf", ignoreCase = true)) {
@@ -82,6 +82,7 @@ internal object ModelFileImporter {
                 throw IllegalStateException("File size changed during import; incomplete copy rejected.")
             }
             val sha256 = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+            verifyExpectedModelSha256(sha256, expectedSha256)
             val existing = ModelStore.findBySha256(modelsDirectory, sha256)
             if (existing != null) {
                 temporary.delete()
