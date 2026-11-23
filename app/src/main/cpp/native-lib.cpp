@@ -213,6 +213,46 @@ Java_dev_gptmax_app_NativeBridge_nativeBuildInfo(JNIEnv * env, jobject) {
     return to_java_string(env, std::string("GpTMax | llama.cpp ") + llama_version() + " | Android NDK");
 }
 
+extern "C" JNIEXPORT jint JNICALL
+Java_dev_gptmax_app_NativeBridge_nativeContextSize(JNIEnv *, jobject) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    return g_context == nullptr ? 0 : static_cast<jint>(llama_n_ctx(g_context));
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_dev_gptmax_app_NativeBridge_nativePromptTokenCount(
+        JNIEnv * env, jobject, jstring prompt_text) {
+    try {
+        if (prompt_text == nullptr) return -1;
+        std::string prompt;
+        if (!from_java_string(env, prompt_text, prompt)) return -1;
+        if (prompt.empty() ||
+                prompt.size() > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+            return -1;
+        }
+
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (g_model == nullptr || g_context == nullptr) return -1;
+
+        std::string formatted_prompt;
+        std::string template_error;
+        if (!apply_model_chat_template(g_model, prompt, formatted_prompt, template_error) ||
+                formatted_prompt.size() >
+                        static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+            return -1;
+        }
+
+        const llama_vocab * vocab = llama_model_get_vocab(g_model);
+        const int32_t capacity = llama_tokenize(
+                vocab, formatted_prompt.c_str(),
+                static_cast<int32_t>(formatted_prompt.size()), nullptr, 0, true, false);
+        if (capacity == std::numeric_limits<int32_t>::min()) return -1;
+        return capacity < 0 ? -capacity : capacity;
+    } catch (...) {
+        return -1;
+    }
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 native_load_model_impl(JNIEnv * env, jstring model_path) {
     if (model_path == nullptr) return to_java_string(env, "Model path is empty.");
