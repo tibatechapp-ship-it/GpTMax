@@ -4,7 +4,7 @@
 
 GpTMax is being designed as an AI development environment inspired by modern agentic code editors: project explorer, code editor, integrated agent, controlled terminal/runtime, Git-aware changes, and build/test feedback—powered first by on-device GGUF inference on Android.
 
- > **Current implementation:** Android app with local GGUF inference foundation, a coding-agent UI, selected-project SAF access, bounded local-model tool loop, file list/read/search/write/exact-replace tools, explicit write permission, and an allowlisted managed-process foundation. CI and physical-device validation are tracked separately; this does not yet equal full Cursor feature parity.
+> **Current implementation:** Android app with local GGUF inference foundation, a coding-agent UI, selected-project SAF access, bounded local-model tool loop, file list/read/search/write/exact-replace tools, explicit write permission, and an allowlisted managed-process foundation. CI and physical-device validation are tracked separately; this does not yet equal full Cursor feature parity.
 
 ## Product north star
 
@@ -32,8 +32,7 @@ Turn a natural-language engineering task into a **reviewable, validated change**
 
 - [Product vision](docs/product-vision.md)
 - [System architecture](docs/architecture.md)
-- [Agent and runtime design](docs/agent-runtime.md)
-- [Coding agent implementation and limitations](docs/agent-runtime.md)
+- [Agent runtime, implementation, and limitations](docs/agent-runtime.md)
 - [M1 implementation notes](docs/m1-implementation.md)
 - [M1 physical-device validation runbook](docs/m1-device-validation.md)
 - [Android device compatibility](docs/device-compatibility.md)
