@@ -8,6 +8,10 @@ import kotlinx.serialization.json.jsonPrimitive
 /**
  * Tool surface exposed to the model. Read tools execute immediately inside
  * the loop; write tools are routed through the ApprovalGate first.
+ *
+ * Safety rails live in the workspace repository itself (SensitivePathPolicy +
+ * FileWriteGuard), so a write that is rejected by policy or staleness check
+ * surfaces here as a failed tool result the model can react to.
  */
 class ToolRegistry(private val workspace: WorkspaceRepository) {
 
@@ -48,7 +52,7 @@ class ToolRegistry(private val workspace: WorkspaceRepository) {
             }
             "read_file" -> {
                 val content = workspace.read(arg("path"))
-                if (content == null) ToolResult(false, "file not found")
+                if (content == null) ToolResult(false, "file not found or blocked by policy")
                 else ToolResult(true, content.take(MAX_FILE_CHARS))
             }
             "grep" -> {
@@ -61,12 +65,23 @@ class ToolRegistry(private val workspace: WorkspaceRepository) {
             }
             "write_file" -> {
                 // Content comes fully formed from the model after approval.
-                workspace.write(arg("path"), arg("content"))
-                ToolResult(true, "wrote ${arg("path")}")
+                val path = arg("path")
+                when (val result = workspace.write(path, arg("content"))) {
+                    is WorkspaceRepository.WriteResult.Written -> ToolResult(true, "wrote $path")
+                    is WorkspaceRepository.WriteResult.Blocked ->
+                        ToolResult(false, "write blocked: ${result.reason}")
+                }
             }
             "delete_file" -> {
-                workspace.delete(arg("path"))
-                ToolResult(true, "deleted ${arg("path")}")
+                val path = arg("path")
+                if (workspace.delete(path)) {
+                    ToolResult(true, "deleted $path")
+                } else {
+                    ToolResult(
+                        false,
+                        "delete failed: path not found, is a directory, or is protected by policy",
+                    )
+                }
             }
             "finish" -> ToolResult(true, arg("summary").ifBlank { "done" })
             else -> ToolResult(false, "unknown tool: ${step.tool}")
