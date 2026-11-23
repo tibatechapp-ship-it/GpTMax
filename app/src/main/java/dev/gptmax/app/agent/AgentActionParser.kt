@@ -3,9 +3,7 @@ package dev.gptmax.app.agent
 /** Strict small JSON reader for the model's action envelope; no reflection or permissive coercion. */
 internal object AgentActionParser {
     fun parse(raw: String, step: Int): AgentModelAction {
-        val json = raw.trim()
-            .removePrefix("```json").removePrefix("```")
-            .removeSuffix("```").trim()
+        val json = extractObject(raw.trim())
         val root = JsonObjectReader(json).readObject()
         return when (root.string("type")) {
             "final" -> {
@@ -23,6 +21,33 @@ internal object AgentActionParser {
             }
             else -> throw IllegalArgumentException("Model output must be a JSON object with type 'tool' or 'final'.")
         }
+    }
+
+
+    private fun extractObject(raw: String): String {
+        val start = raw.indexOf('{')
+        require(start >= 0) { "No JSON action object found." }
+        var depth = 0
+        var inString = false
+        var escaped = false
+        for (index in start until raw.length) {
+            val ch = raw[index]
+            if (inString) {
+                if (escaped) escaped = false
+                else if (ch == '\\\\') escaped = true
+                else if (ch == '"') inString = false
+            } else {
+                when (ch) {
+                    '"' -> inString = true
+                    '{' -> depth++
+                    '}' -> {
+                        depth--
+                        if (depth == 0) return raw.substring(start, index + 1)
+                    }
+                }
+            }
+        }
+        throw IllegalArgumentException("Incomplete JSON action object.")
     }
 
     private class JsonObjectReader(private val source: String) {
