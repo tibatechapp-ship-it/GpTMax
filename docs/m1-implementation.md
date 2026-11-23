@@ -12,6 +12,9 @@
 - Import and native model loading run off the UI thread.
 - Native generation path converts Java UTF-16 prompt input to standard UTF-8 (including surrogate pairs), tokenizes the prompt, evaluates it with llama.cpp in batches bounded by `llama_n_batch`, samples output tokens, decodes token pieces, and streams complete UTF-8 text chunks through a JNI callback.
 - Native model paths use the same explicit UTF-16-to-UTF-8 conversion rather than relying on JNI Modified UTF-8, avoiding corrupted supplementary Unicode characters.
+- Unicode conversion is isolated in a dependency-free C++ utility with strict UTF-8 validation and replacement handling for malformed UTF-16/UTF-8.
+- JNI string access uses a scoped RAII guard so `ReleaseStringChars` runs on every C++ return or exception path.
+- CI compiles and runs native Unicode regression tests covering Arabic, mixed Arabic/English, supplementary-plane emoji, isolated UTF-16 surrogates, overlong UTF-8, UTF-8 encoded surrogates, and out-of-range code points.
 - The UI exposes a prompt, temperature control, generated output, and a stop action.
 - Generation cancellation is signaled atomically and wired to llama.cpp's abort callback. Model unload/shutdown signals cancellation before waiting for the native operation lock, preventing context destruction during active generation.
 
@@ -31,7 +34,7 @@ The current generation path uses the pinned revision's batch and sampler APIs. J
 
 ## Not yet proven or complete
 
-- Successful Android CI build of the latest JNI Unicode-input correction (check the current workflow run before treating it as passed).
+- Successful Android CI build and native Unicode regression tests for the latest JNI hardening commits (check the latest workflow run before treating them as passed).
 - Actual GGUF load and generated text on a physical Android ARM64 device.
 - Memory/thermal profiling, repeated load/unload stress, and low-memory behavior.
 - Robust device-specific context/thread configuration and latency optimization.
