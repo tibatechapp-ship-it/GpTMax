@@ -57,6 +57,31 @@ class AgentRuntimeTest {
     }
 
     @Test
+    fun explicitApprovalAllowsRiskyToolExecution() = kotlinx.coroutines.runBlocking {
+        val tool = FakeTool(risk = ToolRisk.PROCESS_EXECUTION)
+        val model = FakeModel(
+            listOf(
+                AgentModelAction.CallTool(AgentToolCall("approved-1", "fake.read", emptyMap())),
+                AgentModelAction.FinalAnswer("Executed with approval."),
+            ),
+        )
+        var asked = false
+        val result = AgentRuntime(model, AgentToolRegistry(listOf(tool)))
+            .run(
+                "Run command",
+                setOf(ToolRisk.PROCESS_EXECUTION),
+                approvalRequest = { call, spec ->
+                    asked = call.id == "approved-1" && spec.risk == ToolRisk.PROCESS_EXECUTION
+                    asked
+                },
+            )
+
+        assertTrue(asked)
+        assertEquals(ToolExecutionStatus.SUCCESS, result.toolResults.single().status)
+        assertEquals(1, tool.executions)
+    }
+
+    @Test
     fun stopsAtConfiguredToolCallBudget() = kotlinx.coroutines.runBlocking {
         val tool = FakeTool()
         val model = FakeModel(List(4) {
