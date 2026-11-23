@@ -1,56 +1,29 @@
 cmake_minimum_required(VERSION 3.22.1)
+project(gptmax LANGUAGES C CXX)
 
-project(gptmax_native LANGUAGES C CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-include(FetchContent)
-
-# Keep the inference engine reproducible. Update only through a reviewed dependency change.
-set(GPTMAX_LLAMA_CPP_COMMIT "f4f6f2e7db76e98c95cc9b7fc608ea669c806044" CACHE STRING "Pinned llama.cpp commit")
-
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-set(LLAMA_BUILD_COMMON OFF CACHE BOOL "" FORCE)
-set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+# --- llama.cpp (vendored; see VENDOR.md) ------------------------------------
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
-set(LLAMA_BUILD_APP OFF CACHE BOOL "" FORCE)
-set(LLAMA_BUILD_UI OFF CACHE BOOL "" FORCE)
-set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
-set(LLAMA_SUBPROCESS OFF CACHE BOOL "" FORCE)
-set(LLAMA_LLGUIDANCE OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_SERVER   OFF CACHE BOOL "" FORCE)
+set(LLAMA_CURL           OFF CACHE BOOL "" FORCE)
 
-set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
-set(GGML_CPU ON CACHE BOOL "" FORCE)
+add_subdirectory(llama.cpp)
 
-# Set ARM tuning only for ARM ABIs. x86_64 must use ggml's architecture
-# detection rather than inheriting an ARM-specific compiler target.
-if(ANDROID_ABI STREQUAL "arm64-v8a")
-    set(GGML_CPU_ARM_ARCH "armv8-a" CACHE STRING "" FORCE)
-elseif(ANDROID_ABI STREQUAL "armeabi-v7a")
-    set(GGML_CPU_ARM_ARCH "armv7-a" CACHE STRING "" FORCE)
-else()
-    unset(GGML_CPU_ARM_ARCH CACHE)
-endif()
-
-set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
-set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
-set(GGML_BACKEND_DL OFF CACHE BOOL "" FORCE)
-set(GGML_CUDA OFF CACHE BOOL "" FORCE)
-set(GGML_VULKAN OFF CACHE BOOL "" FORCE)
-set(GGML_METAL OFF CACHE BOOL "" FORCE)
-set(GGML_HIP OFF CACHE BOOL "" FORCE)
-set(GGML_SYCL OFF CACHE BOOL "" FORCE)
-
-FetchContent_Declare(
-    llama_cpp
-    GIT_REPOSITORY https://github.com/ggml-org/llama.cpp.git
-    GIT_TAG ${GPTMAX_LLAMA_CPP_COMMIT}
-    GIT_SHALLOW FALSE
-    GIT_PROGRESS TRUE
+# --- GpTMax JNI bridge -------------------------------------------------------
+add_library(gptmax SHARED
+    gptmax_jni.cpp
 )
-FetchContent_MakeAvailable(llama_cpp)
 
-add_library(gptmax_native SHARED native-lib.cpp)
-target_compile_features(gptmax_native PRIVATE cxx_std_17)
-target_compile_options(gptmax_native PRIVATE -Wall -Wextra -Wpedantic)
-target_link_libraries(gptmax_native PRIVATE llama log)
+target_include_directories(gptmax PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/llama.cpp/include)
+
+find_library(log-lib log)
+target_link_libraries(gptmax PRIVATE llama ${log-lib})
+
+# arm64 codegen for Cortex-X/A7xx-class cores (dotprod is standard on target devices).
+target_compile_options(gptmax PRIVATE
+    -ffast-math
+    -fvisibility=hidden
+)
