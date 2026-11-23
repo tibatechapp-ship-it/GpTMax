@@ -95,6 +95,27 @@ class ModelStoreTest {
     }
 
     @Test
+    fun rejectsContentAddressedFileWhoseBytesDoNotMatchItsName() {
+        val directory = Files.createTempDirectory("gptmax-models-integrity").toFile()
+        try {
+            val original = byteArrayOf(1, 2, 3, 4, 5, 6)
+            val expectedSha = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(original)
+                .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+            val tampered = File(directory, "$expectedSha.gguf").apply {
+                writeBytes(byteArrayOf(6, 5, 4, 3, 2, 1))
+            }
+
+            assertThrows(IllegalArgumentException::class.java) {
+                ModelStore.findBySha256(directory, expectedSha)
+            }
+            assertTrue(tampered.exists())
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun removesOnlyIncompletePartialFiles() {
         val directory = Files.createTempDirectory("gptmax-models-cleanup").toFile()
         try {
