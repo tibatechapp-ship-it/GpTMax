@@ -74,7 +74,7 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
         }
     }
 
-    fun importAndLoadModel(uri: Uri) {
+    fun importAndLoadModel(uri: Uri, expectedSha256: String? = null) {
         if (mutableState.value.isBusy || mutableState.value.isGenerating) return
         viewModelScope.launch {
             mutableState.update {
@@ -85,7 +85,7 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
                 )
             }
             try {
-                val imported = ModelFileImporter.import(getApplication(), uri)
+                val imported = ModelFileImporter.import(getApplication(), uri, expectedSha256)
                 mutableState.update {
                     it.copy(
                         modelDetails = buildString {
