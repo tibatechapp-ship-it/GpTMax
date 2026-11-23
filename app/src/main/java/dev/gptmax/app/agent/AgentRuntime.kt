@@ -121,6 +121,10 @@ class AgentRuntime(
                 )
             }
 
+            if (cancellation.get()) {
+                return AgentRunResult(AgentRunStatus.CANCELLED, "Task cancelled.", results, calls)
+            }
+
             when (action) {
                 is AgentModelAction.FinalAnswer -> {
                     return AgentRunResult(AgentRunStatus.COMPLETED, action.text, results, calls)
