@@ -231,7 +231,11 @@ Java_dev_gptmax_app_NativeBridge_nativeGenerate(
     }
 
     llama_memory_clear(llama_get_memory(g_context), true);
-    llama_batch batch = llama_batch_init(std::max<int32_t>(actual_tokens, 1), 0, 1);
+    const uint32_t configured_batch = llama_n_batch(g_context);
+    const int32_t batch_capacity = static_cast<int32_t>(
+            std::min<uint32_t>(static_cast<uint32_t>(actual_tokens),
+                    std::max<uint32_t>(configured_batch, 1)));
+    llama_batch batch = llama_batch_init(batch_capacity, 0, 1);
     if (batch.token == nullptr || batch.pos == nullptr || batch.n_seq_id == nullptr ||
         batch.seq_id == nullptr || batch.logits == nullptr) {
         llama_batch_free(batch);
@@ -239,17 +243,23 @@ Java_dev_gptmax_app_NativeBridge_nativeGenerate(
         return to_java_string(env, "Could not allocate inference batch.");
     }
 
-    for (int32_t i = 0; i < actual_tokens; ++i) {
-        batch.token[i] = prompt_tokens[static_cast<size_t>(i)];
-        batch.pos[i] = i;
-        batch.n_seq_id[i] = 1;
-        batch.seq_id[i][0] = 0;
-        batch.logits[i] = (i == actual_tokens - 1) ? 1 : 0;
+    int32_t prompt_decode = 0;
+    for (int32_t offset = 0; offset < actual_tokens &&
+            !g_cancel_requested.load(std::memory_order_relaxed); offset += batch_capacity) {
+        const int32_t chunk_size = std::min(batch_capacity, actual_tokens - offset);
+        batch.n_tokens = chunk_size;
+        for (int32_t i = 0; i < chunk_size; ++i) {
+            const int32_t position = offset + i;
+            batch.token[i] = prompt_tokens[static_cast<size_t>(position)];
+            batch.pos[i] = position;
+            batch.n_seq_id[i] = 1;
+            batch.seq_id[i][0] = 0;
+            batch.logits[i] = (position == actual_tokens - 1) ? 1 : 0;
+        }
+        prompt_decode = llama_decode(g_context, batch);
+        if (prompt_decode != 0) break;
     }
-    batch.n_tokens = actual_tokens;
-
-    const int32_t prompt_decode = llama_decode(g_context, batch);
-    if (prompt_decode != 0) {
+    if (g_cancel_requested.load(std::memory_order_relaxed) || prompt_decode != 0) {
         llama_batch_free(batch);
         llama_set_abort_callback(g_context, nullptr, nullptr);
         return to_java_string(env, g_cancel_requested.load() ? "CANCELLED" :
@@ -282,7 +292,11 @@ Java_dev_gptmax_app_NativeBridge_nativeGenerate(
 
     while (generated < max_tokens && !g_cancel_requested.load(std::memory_order_relaxed)) {
         const llama_token token = llama_sampler_sample(sampler, g_context, -1);
-        llama_sampler_accept(sampler, token);
+        // llama_sampler_sample() accepts the sampled token internally at this revision.
+        if (token < 0) {
+            failed = true;
+            break;
+        }
         if (llama_vocab_is_eog(vocab, token)) {
             ended = true;
             break;
