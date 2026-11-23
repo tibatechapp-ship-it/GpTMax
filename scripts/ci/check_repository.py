@@ -45,7 +45,7 @@ def main() -> int:
             fail(f"Required file missing: {relative}")
             continue
         text = path.read_text(encoding="utf-8")
-        if not text.strip().startswith("# "):
+        if path.suffix.lower() == ".md" and not text.strip().startswith("# "):
             fail(f"Expected a Markdown H1 at the beginning: {relative}")
         for number, line in enumerate(text.splitlines(), start=1):
             if line.rstrip() != line:
