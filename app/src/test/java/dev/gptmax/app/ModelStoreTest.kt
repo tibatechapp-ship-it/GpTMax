@@ -63,6 +63,38 @@ class ModelStoreTest {
     }
 
     @Test
+    fun deduplicatesIdenticalModelFilesAndDeletesAllCopies() {
+        val directory = Files.createTempDirectory("gptmax-models-duplicates").toFile()
+        try {
+            val bytes = byteArrayOf(1, 2, 3, 4, 5)
+            val first = File(directory, "first.gguf").apply { writeBytes(bytes) }
+            val second = File(directory, "second.gguf").apply { writeBytes(bytes) }
+            val sha = ModelStore.sha256(first)
+            ModelStore.writeMetadata(directory, sha, "Shared Model.gguf", bytes.size.toLong())
+
+            assertEquals(1, ModelStore.list(directory).size)
+            ModelStore.delete(directory, sha)
+            assertFalse(first.exists())
+            assertFalse(second.exists())
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun malformedMetadataDoesNotHideModel() {
+        val directory = Files.createTempDirectory("gptmax-models-metadata").toFile()
+        try {
+            val model = File(directory, "model.gguf").apply { writeBytes(byteArrayOf(9, 8, 7, 6)) }
+            val sha = ModelStore.sha256(model)
+            File(directory, "$sha.meta").writeText("not valid properties \\u0000")
+            assertEquals(1, ModelStore.list(directory).size)
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun removesOnlyIncompletePartialFiles() {
         val directory = Files.createTempDirectory("gptmax-models-cleanup").toFile()
         try {
