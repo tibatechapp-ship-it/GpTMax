@@ -8,8 +8,8 @@ import java.io.FileNotFoundException
 import java.util.concurrent.atomic.AtomicBoolean
 
 private val sensitiveDocumentNames = setOf(
-    ".env", ".env.local", ".env.production", "id_rsa", "id_ed25519",
-    "credentials.json", "secrets.json", "keystore.jks",
+    ".env", ".env.local", ".env.production", ".npmrc", ".netrc", ".git-credentials",
+    "id_rsa", "id_ed25519", "credentials.json", "secrets.json", "keystore.jks",
 )
 
 private fun safeDocumentName(name: String): Boolean =
@@ -24,6 +24,10 @@ private fun documentSegments(path: String): List<String> {
     val parts = path.split('/', '\\')
     require(parts.none { it.isBlank() || it == "." || it == ".." }) {
         "Path traversal or empty path segment is not allowed."
+    }
+    val blockedDirectories = setOf(".git", ".ssh", ".aws", ".gradle", "node_modules")
+    require(parts.none { it.lowercase() in blockedDirectories }) {
+        "Access to credential, VCS metadata, and generated dependency directories is blocked."
     }
     return parts
 }
