@@ -102,6 +102,7 @@ class WorkspaceSearchTool(private val root: File) : AgentTool {
         }.forEach { file ->
             if (cancellation.get() || scanned >= 300 || matches.size >= 100) return@forEach
             if (!file.isFile || isSensitiveFile(file) || file.length() > 128 * 1024) return@forEach
+            if (!runCatching { file.canonicalPath.startsWith(root.canonicalPath + File.separator) }.getOrDefault(false)) return@forEach
             scanned++
             val content = runCatching { file.readText(Charset.forName("UTF-8")) }.getOrNull() ?: return@forEach
             if (content.contains('\u0000')) return@forEach
@@ -136,7 +137,7 @@ class WorkspaceWriteTool(private val root: File) : AgentTool {
         require(content.length <= 128 * 1024) { "File content exceeds 128 KiB limit." }
         require(!content.contains('\u0000')) { "Binary content is not supported." }
         require(file.parentFile?.isDirectory == true) { "Parent directory must already exist." }
-        val temp = File(file.parentFile, file.name + ".gptmax-tmp")
+        val temp = File(file.parentFile, file.name + ".gptmax-tmp-" + System.nanoTime())
         try {
             temp.writeText(content, Charsets.UTF_8)
             if (cancellation.get()) {
