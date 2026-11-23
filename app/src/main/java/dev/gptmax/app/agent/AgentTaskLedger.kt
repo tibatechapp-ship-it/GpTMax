@@ -20,12 +20,13 @@ class AgentTaskLedger(private val file: File) {
         output: String? = null,
     ) {
         require(sessionId.length <= 128 && event.length <= 64)
+        file.parentFile?.mkdirs()
         if (file.exists() && file.length() > MAX_LEDGER_BYTES) {
             val rotated = File(file.parentFile, file.name + ".previous")
             if (rotated.exists()) rotated.delete()
             require(file.renameTo(rotated)) { "Could not rotate agent ledger." }
         }
-        file.parentFile?.mkdirs()
+
         val row = linkedMapOf<String, String?>(
             "timestamp" to System.currentTimeMillis().toString(),
             "session_id" to sessionId,
@@ -33,12 +34,24 @@ class AgentTaskLedger(private val file: File) {
             "tool" to toolName,
             "status" to status,
             "duration_ms" to durationMs?.toString(),
-            "output_sha256" to output?.let(::sha256),
+            "output_sha256" to output?.let { sha256(it) },
         )
-        FileOutputStream(file, true).bufferedWriter(Charsets.UTF_8).use { writer ->
-            writer.write(row.entries.joinToString(prefix = "{", postfix = "}") { (key, value) ->
-                "\"${escape(key)}\":${value?.let { "\"" + escape(it) + "\"" } ?: "null"}"
+        val json = buildString {
+            append('{')
+            row.entries.forEachIndexed { index, entry ->
+                if (index > 0) append(',')
+                append('"').append(escape(entry.key)).append("\":")
+                val value = entry.value
+                if (value == null) {
+                    append("null")
+                } else {
+                    append('"').append(escape(value)).append('"')
+                }
             }
+            append('}')
+        }
+        FileOutputStream(file, true).bufferedWriter(Charsets.UTF_8).use { writer ->
+            writer.write(json)
             writer.newLine()
         }
     }
