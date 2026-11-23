@@ -2,61 +2,33 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.ksp)
 }
 
 android {
-    namespace = "dev.gptmax.app"
+    namespace = "com.tibatech.gptmax"
     compileSdk = 35
-    ndkVersion = "27.0.12077973"
 
     defaultConfig {
-        applicationId = "dev.gptmax.app"
+        applicationId = "com.tibatech.gptmax"
         minSdk = 26
         targetSdk = 35
-        ndk {
-            // Package native runtimes for the main Android device families:
-            // 64-bit ARM phones, legacy 32-bit ARM phones, and x86_64 devices.
-            // Android selects the matching shared library at install time.
-            abiFilters += setOf("arm64-v8a", "armeabi-v7a", "x86_64")
-        }
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "0.1.0-alpha"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        ndk {
+            // Local-first strategy: arm64-v8a only (per development plan).
+            // llama.cpp delivers its best throughput on arm64 via dotprod/i8mm.
+            abiFilters += listOf("arm64-v8a")
+        }
 
         externalNativeBuild {
             cmake {
-                cppFlags += listOf("-std=c++17", "-Wall", "-Wextra")
+                arguments += listOf("-DANDROID_STL=c++_shared")
+                cppFlags += listOf("-O3")
             }
         }
-    }
-
-    buildTypes {
-        debug {
-            applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
-        }
-        release {
-            isMinifyEnabled = false
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro",
-            )
-        }
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
-    buildFeatures {
-        compose = true
-        buildConfig = true
     }
 
     externalNativeBuild {
@@ -66,25 +38,51 @@ android {
         }
     }
 
-    packaging {
-        jniLibs {
-            useLegacyPackaging = false
+    buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
         }
+        release {
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+    buildFeatures {
+        compose = true
     }
 }
 
 dependencies {
     implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation(libs.androidx.lifecycle.viewmodel.ktx)
-    implementation(libs.androidx.documentfile)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.activity.compose)
 
     implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.androidx.compose.ui)
-    implementation(libs.androidx.compose.ui.tooling.preview)
-    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.ui)
+    implementation(libs.androidx.ui.graphics)
+    implementation(libs.androidx.ui.tooling.preview)
+    implementation(libs.androidx.material3)
+    implementation(libs.androidx.material.icons)
+    implementation(libs.androidx.navigation.compose)
 
-    testImplementation(libs.junit)
-    debugImplementation(libs.androidx.compose.ui.tooling)
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
+
+    implementation(libs.androidx.datastore)
+    implementation(libs.okhttp)
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kotlinx.serialization.json)
 }
