@@ -22,6 +22,8 @@ internal data class InferenceUiState(
     val isBusy: Boolean = false,
     val isGenerating: Boolean = false,
     val modelReady: Boolean = false,
+    val storedModels: List<StoredModel> = emptyList(),
+    val activeModelSha256: String? = null,
 )
 
 internal class GpTMaxViewModel(application: Application) : AndroidViewModel(application) {
@@ -30,6 +32,7 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
 
     init {
         refreshRuntimeInfo()
+        refreshModels()
     }
 
     fun updatePrompt(value: String) {
@@ -95,8 +98,10 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
                 mutableState.update {
                     it.copy(
                         modelReady = ready,
+                        activeModelSha256 = if (ready) imported.sha256 else null,
                         nativeStatus = if (ready) "GGUF loaded; inference context ready."
                             else "Model load failed: $result",
+                        storedModels = ModelStore.list(File(getApplication<Application>().filesDir, "models")),
                     )
                 }
             } catch (error: Exception) {
@@ -105,6 +110,49 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
                         modelReady = false,
                         nativeStatus = "Model import/load failed: ${error.message ?: error.javaClass.simpleName}",
                     )
+                }
+            } finally {
+                mutableState.update { it.copy(isBusy = false) }
+            }
+        }
+    }
+
+    fun refreshModels() {
+        viewModelScope.launch {
+            val models = withContext(Dispatchers.IO) {
+                val directory = File(getApplication<Application>().filesDir, "models")
+                ModelStore.cleanupIncomplete(directory)
+                ModelStore.list(directory)
+            }
+            mutableState.update { it.copy(storedModels = models) }
+        }
+    }
+
+    fun deleteModel(sha256: String) {
+        val snapshot = mutableState.value
+        if (snapshot.isBusy || snapshot.isGenerating) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(isBusy = true, nativeStatus = "Removing stored model…") }
+            try {
+                withContext(Dispatchers.IO) {
+                    val directory = File(getApplication<Application>().filesDir, "models")
+                    if (snapshot.activeModelSha256 == sha256) {
+                        NativeBridge.nativeUnloadModel()
+                    }
+                    ModelStore.delete(directory, sha256)
+                }
+                mutableState.update { current ->
+                    current.copy(
+                        modelReady = if (current.activeModelSha256 == sha256) false else current.modelReady,
+                        activeModelSha256 = if (current.activeModelSha256 == sha256) null else current.activeModelSha256,
+                        nativeStatus = if (current.activeModelSha256 == sha256) "Model unloaded and deleted."
+                            else "Stored model deleted.",
+                    )
+                }
+                refreshModels()
+            } catch (error: Exception) {
+                mutableState.update {
+                    it.copy(nativeStatus = "Could not delete model: ${error.message ?: error.javaClass.simpleName}")
                 }
             } finally {
                 mutableState.update { it.copy(isBusy = false) }

@@ -52,6 +52,7 @@ class MainActivity : ComponentActivity() {
                     onGenerate = viewModel::generate,
                     onCancel = viewModel::cancelGeneration,
                     onRefresh = viewModel::refreshRuntimeInfo,
+                    onDeleteModel = viewModel::deleteModel,
                 )
             }
         }
@@ -67,6 +68,7 @@ private fun GpTMaxHome(
     onGenerate: () -> Unit,
     onCancel: () -> Unit,
     onRefresh: () -> Unit,
+    onDeleteModel: (String) -> Unit,
 ) {
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -155,6 +157,42 @@ private fun GpTMaxHome(
                         state.generatedText.ifBlank { "Generated tokens will appear here as the model responds." },
                         style = MaterialTheme.typography.bodyMedium,
                     )
+                }
+            }
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text("Stored models", style = MaterialTheme.typography.titleLarge)
+                    if (state.storedModels.isEmpty()) {
+                        Text("No imported models.", style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        state.storedModels.forEach { model ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(model.displayName, style = MaterialTheme.typography.bodyMedium)
+                                    Text(
+                                        "${model.sizeBytes} bytes · ${model.sha256.take(12)}…",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    if (model.sha256 == state.activeModelSha256) {
+                                        Text("Currently loaded", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                }
+                                Button(
+                                    onClick = { onDeleteModel(model.sha256) },
+                                    enabled = !state.isBusy && !state.isGenerating,
+                                ) { Text("Delete") }
+                            }
+                        }
+                    }
                 }
             }
             Text("Platform foundations", style = MaterialTheme.typography.titleMedium)

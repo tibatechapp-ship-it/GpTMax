@@ -34,6 +34,7 @@ internal object ModelFileImporter {
         check(modelsDirectory.exists() || modelsDirectory.mkdirs()) {
             "Could not create private model directory."
         }
+        ModelStore.cleanupIncomplete(modelsDirectory)
         val usableBytes = modelsDirectory.usableSpace
         if (expectedSize != null && expectedSize > usableBytes) {
             throw IllegalStateException("Not enough app storage for this model.")
@@ -80,14 +81,32 @@ internal object ModelFileImporter {
             if (expectedSize != null && expectedSize != copied) {
                 throw IllegalStateException("File size changed during import; incomplete copy rejected.")
             }
-            check(temporary.renameTo(destination)) {
+            val sha256 = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+            val existing = ModelStore.findBySha256(modelsDirectory, sha256)
+            if (existing != null) {
+                temporary.delete()
+                return@withContext ImportedModel(
+                    displayName = existing.displayName,
+                    file = existing.file,
+                    sizeBytes = existing.sizeBytes,
+                    sha256 = existing.sha256,
+                )
+            }
+            val contentAddressedDestination = File(modelsDirectory, "$sha256.gguf")
+            check(temporary.renameTo(contentAddressedDestination)) {
                 "Could not finalize imported model file."
+            }
+            try {
+                ModelStore.writeMetadata(modelsDirectory, sha256, metadata.first, copied)
+            } catch (error: Exception) {
+                contentAddressedDestination.delete()
+                throw error
             }
             ImportedModel(
                 displayName = metadata.first,
-                file = destination,
+                file = contentAddressedDestination,
                 sizeBytes = copied,
-                sha256 = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) },
+                sha256 = sha256,
             )
         } catch (error: Exception) {
             temporary.delete()
