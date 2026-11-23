@@ -94,7 +94,7 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
     }
 
     fun importAndLoadModel(uri: Uri, expectedSha256: String? = null) {
-        if (mutableState.value.isBusy || mutableState.value.isGenerating) return
+        if (mutableState.value.isBusy || mutableState.value.isGenerating || mutableState.value.agentRunning) return
         viewModelScope.launch {
             mutableState.update {
                 it.copy(
@@ -164,7 +164,7 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
 
     fun loadStoredModel(sha256: String) {
         val snapshot = mutableState.value
-        if (snapshot.isBusy || snapshot.isGenerating) return
+        if (snapshot.isBusy || snapshot.isGenerating || snapshot.agentRunning) return
         viewModelScope.launch {
             mutableState.update {
                 it.copy(isBusy = true, nativeStatus = "Preparing stored GGUF model…")
@@ -259,7 +259,7 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
 
     fun unloadModel() {
         val snapshot = mutableState.value
-        if (snapshot.isBusy || snapshot.isGenerating || !snapshot.modelReady) return
+        if (snapshot.isBusy || snapshot.isGenerating || snapshot.agentRunning || !snapshot.modelReady) return
         viewModelScope.launch {
             mutableState.update { it.copy(isBusy = true, nativeStatus = "Unloading native model…") }
             try {
