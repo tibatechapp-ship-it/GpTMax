@@ -35,7 +35,7 @@ internal object AgentActionParser {
             skipWhitespace()
             if (peek('}')) {
                 index++
-                requireEnd()
+                if (requireEndAfter) requireEnd()
                 return result
             }
             while (true) {
@@ -57,7 +57,7 @@ internal object AgentActionParser {
                 }
                 expect(',')
             }
-            requireEnd()
+            if (requireEndAfter) requireEnd()
             return result
         }
 
