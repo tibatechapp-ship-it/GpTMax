@@ -75,11 +75,15 @@ class ProjectContextEngineTest {
             engine.checkpoint("task-x","Implement context graph","Indexed sources","Run tests")
             engine.addStage("task-x","validation","blocked","Android build pending")
             engine.observeTool("task-x","file.search","SUCCESS","Found references in src/Kept.kt")
+            engine.observeTool("task-x","file.read","SUCCESS","class SecretHolder { API_KEY=do-not-persist }")
             val reopened=ProjectContextEngine(store)
             val restored=reopened.restoreTask("task-x")
             assertTrue(restored.contains("Run tests"))
             assertTrue(restored.contains("validation"))
             assertTrue(restored.contains("file.search"))
+            assertTrue(restored.contains("source content is not persisted"))
+            assertFalse(restored.contains("SecretHolder"))
+            assertFalse(restored.contains("do-not-persist"))
             assertFalse(reopened.recall("Old",5).contains("src/Old.kt"))
         } finally { directory.deleteRecursively() }
     }

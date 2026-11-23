@@ -45,7 +45,7 @@ class DocumentTreeContextIndexTool(context:Context,treeUri:Uri,private val engin
                 val path=if(prefix.isEmpty())name else "$prefix/$name"
                 scanned++
                 val previous=engine.recordFor(path)
-                if(previous!=null&&previous.size==child.length()&&previous.modified==child.lastModified()){records+=previous;continue}
+                if(previous!=null&&child.lastModified()>0&&previous.size==child.length()&&previous.modified==child.lastModified()){records+=previous;continue}
                 val content=runCatching{readContextDocument(appContext,child,MAX_BYTES)}.getOrNull()
                 if(content==null){skipped++;previous?.let{records+=it};traversalComplete=false;continue}
                 records+=engine.createRecord(path,child.length(),child.lastModified(),content)

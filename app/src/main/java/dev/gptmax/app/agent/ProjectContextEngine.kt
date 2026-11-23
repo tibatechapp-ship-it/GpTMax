@@ -67,7 +67,7 @@ class ProjectContextEngine(private val stateFile: File) {
     }
     fun observeTool(taskId:String,tool:String,status:String,summary:String)=synchronized(lock) {
         require(taskId.length<=100&&tool.length<=120&&status.length<=40&&summary.length<=1200)
-        val safe=redact(summary).take(800)
+        val safe=if(tool=="file.read") "File read completed; source content is not persisted." else redact(summary).take(800)
         observations+=ToolObservation(taskId,tool,status,safe,System.currentTimeMillis())
         while(observations.size>MAX_OBSERVATIONS)observations.removeAt(0)
         persist()
@@ -170,7 +170,7 @@ class ProjectContextEngine(private val stateFile: File) {
         }finally{if(temp.exists())temp.delete()}
     }
     private fun redact(text:String)=text.lineSequence().take(250).joinToString("\n"){line->if(sensitive(line))"[REDACTED: possible secret]"else line.take(400)}
-    private fun sensitive(s:String):Boolean=Regex("(api[_-]?key|access[_-]?token|secret|password|private[_-]?key)\\s*[:=]",RegexOption.IGNORE_CASE).containsMatchIn(s)||Regex("-----BEGIN [A-Z ]*PRIVATE KEY-----",RegexOption.IGNORE_CASE).containsMatchIn(s)
+    private fun sensitive(s:String):Boolean=Regex("(api[_-]?key|access[_-]?token|secret|password|private[_-]?key)(?:\\x22|\\x27)?\\s*[:=]",RegexOption.IGNORE_CASE).containsMatchIn(s)||Regex("-----BEGIN [A-Z ]*PRIVATE KEY-----",RegexOption.IGNORE_CASE).containsMatchIn(s)
     private fun classify(path:String):String=when{
         path.substringAfterLast('/').lowercase() in setOf("package.json","pyproject.toml","build.gradle","build.gradle.kts","settings.gradle","settings.gradle.kts","cargo.toml","go.mod","pom.xml","manifest.json")->"manifest"
         path.contains("test",true)||path.contains("spec",true)->"test"
