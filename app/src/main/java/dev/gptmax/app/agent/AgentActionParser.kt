@@ -34,7 +34,7 @@ internal object AgentActionParser {
             val ch = raw[index]
             if (inString) {
                 if (escaped) escaped = false
-                else if (ch == '\\\\') escaped = true
+                else if (ch.code == 92) escaped = true
                 else if (ch == '"') inString = false
             } else {
                 when (ch) {
