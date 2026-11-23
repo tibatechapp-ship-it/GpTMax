@@ -159,6 +159,7 @@ fun createWorkspaceToolRegistry(root: File): AgentToolRegistry = AgentToolRegist
         WorkspaceReadTool(root),
         WorkspaceSearchTool(root),
         WorkspaceWriteTool(root),
+        ManagedProcessTool(root),
     ),
 )
 
