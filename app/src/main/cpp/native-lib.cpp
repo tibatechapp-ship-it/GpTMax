@@ -1,6 +1,7 @@
 #include <jni.h>
 #include <android/log.h>
 #include <llama.h>
+#include "unicode-conversion.h"
 
 #include <algorithm>
 #include <atomic>
@@ -35,84 +36,35 @@ bool abort_requested(void *) {
     return g_cancel_requested.load(std::memory_order_relaxed);
 }
 
+class ScopedJavaChars {
+public:
+    ScopedJavaChars(JNIEnv * env, jstring input)
+        : env_(env), input_(input), chars_(env->GetStringChars(input, nullptr)) {}
+    ~ScopedJavaChars() {
+        if (chars_ != nullptr) env_->ReleaseStringChars(input_, chars_);
+    }
+    ScopedJavaChars(const ScopedJavaChars &) = delete;
+    ScopedJavaChars & operator=(const ScopedJavaChars &) = delete;
+    const jchar * get() const { return chars_; }
+private:
+    JNIEnv * env_;
+    jstring input_;
+    const jchar * chars_;
+};
+
 bool from_java_string(JNIEnv * env, jstring input, std::string & output) {
     if (input == nullptr) return false;
-    const jchar * chars = env->GetStringChars(input, nullptr);
-    if (chars == nullptr) return false;
-    const jsize length = env->GetStringLength(input);
-    output.clear();
-    output.reserve(static_cast<size_t>(length) * 3);
-
-    for (jsize i = 0; i < length; ++i) {
-        uint32_t cp = chars[i];
-        if (cp >= 0xd800 && cp <= 0xdbff) {
-            if (i + 1 < length && chars[i + 1] >= 0xdc00 && chars[i + 1] <= 0xdfff) {
-                cp = 0x10000 + ((cp - 0xd800) << 10) +
-                     (static_cast<uint32_t>(chars[++i]) - 0xdc00);
-            } else {
-                cp = 0xfffd;
-            }
-        } else if (cp >= 0xdc00 && cp <= 0xdfff) {
-            cp = 0xfffd;
-        }
-
-        if (cp <= 0x7f) {
-            output.push_back(static_cast<char>(cp));
-        } else if (cp <= 0x7ff) {
-            output.push_back(static_cast<char>(0xc0 | (cp >> 6)));
-            output.push_back(static_cast<char>(0x80 | (cp & 0x3f)));
-        } else if (cp <= 0xffff) {
-            output.push_back(static_cast<char>(0xe0 | (cp >> 12)));
-            output.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3f)));
-            output.push_back(static_cast<char>(0x80 | (cp & 0x3f)));
-        } else {
-            output.push_back(static_cast<char>(0xf0 | (cp >> 18)));
-            output.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3f)));
-            output.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3f)));
-            output.push_back(static_cast<char>(0x80 | (cp & 0x3f)));
-        }
-    }
-
-    env->ReleaseStringChars(input, chars);
-    return true;
+    ScopedJavaChars chars(env, input);
+    if (chars.get() == nullptr) return false;
+    return gptmax::unicode::utf16_to_utf8(
+            reinterpret_cast<const char16_t *>(chars.get()),
+            static_cast<size_t>(env->GetStringLength(input)), output);
 }
 
 jstring to_java_string(JNIEnv * env, const std::string & value) {
-    // JNI NewStringUTF expects Modified UTF-8. Convert ordinary UTF-8 explicitly.
     std::u16string utf16;
-    utf16.reserve(value.size());
-    size_t i = 0;
-    while (i < value.size()) {
-        const auto c0 = static_cast<uint8_t>(value[i]);
-        uint32_t cp = 0xfffd;
-        size_t count = 1;
-        if (c0 < 0x80) {
-            cp = c0;
-        } else if ((c0 & 0xe0) == 0xc0 && i + 1 < value.size()) {
-            cp = ((c0 & 0x1f) << 6) | (static_cast<uint8_t>(value[i + 1]) & 0x3f);
-            count = 2;
-        } else if ((c0 & 0xf0) == 0xe0 && i + 2 < value.size()) {
-            cp = ((c0 & 0x0f) << 12) |
-                 ((static_cast<uint8_t>(value[i + 1]) & 0x3f) << 6) |
-                 (static_cast<uint8_t>(value[i + 2]) & 0x3f);
-            count = 3;
-        } else if ((c0 & 0xf8) == 0xf0 && i + 3 < value.size()) {
-            cp = ((c0 & 0x07) << 18) |
-                 ((static_cast<uint8_t>(value[i + 1]) & 0x3f) << 12) |
-                 ((static_cast<uint8_t>(value[i + 2]) & 0x3f) << 6) |
-                 (static_cast<uint8_t>(value[i + 3]) & 0x3f);
-            count = 4;
-        }
-        i += count;
-        if (cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) cp = 0xfffd;
-        if (cp <= 0xffff) {
-            utf16.push_back(static_cast<char16_t>(cp));
-        } else {
-            cp -= 0x10000;
-            utf16.push_back(static_cast<char16_t>(0xd800 + (cp >> 10)));
-            utf16.push_back(static_cast<char16_t>(0xdc00 + (cp & 0x3ff)));
-        }
-    }
+    if (!gptmax::unicode::utf8_to_utf16(value, utf16)) return nullptr;
+    if (utf16.size() > static_cast<size_t>(std::numeric_limits<jsize>::max())) return nullptr;
     return env->NewString(reinterpret_cast<const jchar *>(utf16.data()),
                           static_cast<jsize>(utf16.size()));
 }
