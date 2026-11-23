@@ -31,9 +31,11 @@ This roadmap defines the product sequence for GpTMax as a **local-first AI codin
 **Exit condition:** user can open a project, browse/edit files, and inspect changes without an agent.
 
 - [x] Android application shell and Compose foundation screen
-- [ ] Project explorer and safe document-provider integration
+- [x] Safe document-provider integration for selecting a project folder and scoped file access
+- [ ] Project explorer UI
 - [ ] Editor integration with syntax highlighting and multi-tab state
-- [ ] File search and basic project-wide search
+- [x] Agent-backed literal project search tool
+- [ ] Dedicated file search UI
 - [ ] Git status/diff view
 - [ ] App-private task workspace and snapshot strategy
 - [ ] Accessibility, RTL, and small-screen UX baseline
@@ -45,19 +47,21 @@ This roadmap defines the product sequence for GpTMax as a **local-first AI codin
 - [x] Task state machine foundation
 - [x] Initial risk/capability permission policy
 - [ ] Context builder with explicit token/budget limits
-- [ ] Tool registry with schemas, permission levels, and result envelopes
-- [ ] File read/search and patch-based write tools
-- [ ] Tool router and execution controller
-- [ ] Streaming, cancellation, timeout, and bounded retry policy
+- [x] Tool registry with argument contracts, permission levels, and result envelopes
+- [x] File read/search and exact-fragment replacement tools (SAF)
+- [x] Whole-file write tool with bounded change preview
+- [x] Bounded tool router/execution loop
+- [x] Agent cancellation and bounded tool-call budget
+- [x] Managed process tool foundation with timeout/output limits (not yet connected to SAF agent)
 - [ ] Task ledger with inputs, actions, outputs, and failure states
-- [ ] Agent evaluation fixtures and deterministic mock-tool tests
+- [x] Deterministic mock-tool and action-parser tests (CI verification pending)
 
 ## M4 — Integrated Runtime and terminal
 
 **Exit condition:** approved commands execute in a managed process environment and return structured output; unsafe commands are blocked or require approval.
 
-- [ ] Process manager with stdin/stdout/stderr, exit code, timeout, and cancellation
-- [ ] Command/tool allowlist and risk classification
+- [x] Process manager captures stdout/stderr/exit code, timeout, and cancellation (integration/device validation pending)
+- [x] Executable allowlist and process-execution risk classification
 - [ ] Per-task working directory and environment policy
 - [ ] Resource limits and cleanup of child processes
 - [ ] Safe Git and language-tool integrations
