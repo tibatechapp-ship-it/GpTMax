@@ -2,7 +2,7 @@
 
 ## Implemented
 
-- Android app and native C++17 JNI library build in CI; the preceding generation implementation compiled and packaged successfully. The latest JNI UTF-16 input conversion correction is undergoing its own CI run.
+- Android app and native C++17 JNI library build successfully in CI. The latest JNI UTF-16/UTF-8 hardening, native Unicode regression tests, debug APK assembly, and artifact upload all passed in workflow run 45096392824.
 - Native inference dependency is pinned to llama.cpp commit `f4f6f2e7db76e98c95cc9b7fc608ea669c806044`.
 - Android build is restricted to `arm64-v8a` for the M1 target.
 - JNI initializes llama.cpp, loads a GGUF from an app-private path, and creates a context.
@@ -34,7 +34,7 @@ The current generation path uses the pinned revision's batch and sampler APIs. J
 
 ## Not yet proven or complete
 
-- Successful Android CI build and native Unicode regression tests for the latest JNI hardening commits (check the latest workflow run before treating them as passed).
+- Latest verified Android CI run: 45096392824 (success), including native Unicode regression tests, debug APK assembly, and artifact upload.
 - Actual GGUF load and generated text on a physical Android ARM64 device.
 - Memory/thermal profiling, repeated load/unload stress, and low-memory behavior.
 - Robust device-specific context/thread configuration and latency optimization.
