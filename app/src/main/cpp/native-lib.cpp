@@ -35,6 +35,48 @@ bool abort_requested(void *) {
     return g_cancel_requested.load(std::memory_order_relaxed);
 }
 
+bool from_java_string(JNIEnv * env, jstring input, std::string & output) {
+    if (input == nullptr) return false;
+    const jchar * chars = env->GetStringChars(input, nullptr);
+    if (chars == nullptr) return false;
+    const jsize length = env->GetStringLength(input);
+    output.clear();
+    output.reserve(static_cast<size_t>(length) * 3);
+
+    for (jsize i = 0; i < length; ++i) {
+        uint32_t cp = chars[i];
+        if (cp >= 0xd800 && cp <= 0xdbff) {
+            if (i + 1 < length && chars[i + 1] >= 0xdc00 && chars[i + 1] <= 0xdfff) {
+                cp = 0x10000 + ((cp - 0xd800) << 10) +
+                     (static_cast<uint32_t>(chars[++i]) - 0xdc00);
+            } else {
+                cp = 0xfffd;
+            }
+        } else if (cp >= 0xdc00 && cp <= 0xdfff) {
+            cp = 0xfffd;
+        }
+
+        if (cp <= 0x7f) {
+            output.push_back(static_cast<char>(cp));
+        } else if (cp <= 0x7ff) {
+            output.push_back(static_cast<char>(0xc0 | (cp >> 6)));
+            output.push_back(static_cast<char>(0x80 | (cp & 0x3f)));
+        } else if (cp <= 0xffff) {
+            output.push_back(static_cast<char>(0xe0 | (cp >> 12)));
+            output.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3f)));
+            output.push_back(static_cast<char>(0x80 | (cp & 0x3f)));
+        } else {
+            output.push_back(static_cast<char>(0xf0 | (cp >> 18)));
+            output.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3f)));
+            output.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3f)));
+            output.push_back(static_cast<char>(0x80 | (cp & 0x3f)));
+        }
+    }
+
+    env->ReleaseStringChars(input, chars);
+    return true;
+}
+
 jstring to_java_string(JNIEnv * env, const std::string & value) {
     // JNI NewStringUTF expects Modified UTF-8. Convert ordinary UTF-8 explicitly.
     std::u16string utf16;
@@ -133,10 +175,10 @@ extern "C" JNIEXPORT jstring JNICALL
 Java_dev_gptmax_app_NativeBridge_nativeLoadModel(JNIEnv * env, jobject, jstring model_path) {
     if (model_path == nullptr) return to_java_string(env, "Model path is empty.");
 
-    const char * path_chars = env->GetStringUTFChars(model_path, nullptr);
-    if (path_chars == nullptr) return to_java_string(env, "Could not read model path.");
-    const std::string path(path_chars);
-    env->ReleaseStringUTFChars(model_path, path_chars);
+    std::string path;
+    if (!from_java_string(env, model_path, path)) {
+        return to_java_string(env, "Could not decode model path.");
+    }
 
     std::lock_guard<std::mutex> lock(g_mutex);
     release_model_locked();
@@ -176,10 +218,10 @@ Java_dev_gptmax_app_NativeBridge_nativeGenerate(
         return to_java_string(env, "Invalid generation arguments.");
     }
 
-    const char * prompt_chars = env->GetStringUTFChars(prompt_text, nullptr);
-    if (prompt_chars == nullptr) return to_java_string(env, "Could not read prompt.");
-    const std::string prompt(prompt_chars);
-    env->ReleaseStringUTFChars(prompt_text, prompt_chars);
+    std::string prompt;
+    if (!from_java_string(env, prompt_text, prompt)) {
+        return to_java_string(env, "Could not decode prompt text.");
+    }
     if (prompt.empty()) return to_java_string(env, "Prompt is empty.");
     if (prompt.size() > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
         return to_java_string(env, "Prompt is too large.");
