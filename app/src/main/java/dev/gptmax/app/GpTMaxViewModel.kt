@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import java.util.concurrent.atomic.AtomicBoolean
 import dev.gptmax.app.agent.AgentRunLimits
+import dev.gptmax.app.agent.AgentTaskLedger
 import dev.gptmax.app.agent.AgentRuntime
 import dev.gptmax.app.agent.LocalLlamaAgentModel
 import dev.gptmax.app.agent.ToolRisk
@@ -318,12 +319,15 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
         if (snapshot.agentRequest.isBlank()) return
 
         val cancellation = AtomicBoolean(false)
+        val ledger = AgentTaskLedger(File(getApplication<Application>().filesDir, "agent/ledger.jsonl"))
+        val sessionId = AgentTaskLedger.newSessionId()
         agentCancellation = cancellation
         mutableState.update {
             it.copy(agentRunning = true, agentOutput = "Agent is inspecting the selected project…", agentToolLog = emptyList())
         }
         viewModelScope.launch {
             try {
+                withContext(Dispatchers.IO) { ledger.record(sessionId, "session_started") }
                 val registry = createDocumentTreeToolRegistry(getApplication(), Uri.parse(treeUri))
                 val capabilities = buildSet {
                     add(ToolRisk.READ_ONLY)
@@ -338,12 +342,18 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
                     grantedCapabilities = capabilities,
                     cancellation = cancellation,
                     onToolResult = { tool ->
+                        withContext(Dispatchers.IO) {
+                            ledger.record(sessionId, "tool_result", tool.toolName, tool.status.name, tool.durationMs, tool.output)
+                        }
                         val entry = tool.toolName + " · " + tool.status + "\n" + tool.output.take(2_500)
                         mutableState.update { current ->
                             current.copy(agentToolLog = (current.agentToolLog + entry).takeLast(12))
                         }
                     },
                 )
+                withContext(Dispatchers.IO) {
+                    ledger.record(sessionId, "session_finished", status = result.status.name, output = result.answer)
+                }
                 val log = result.toolResults.map { tool ->
                     "${tool.toolName} · ${tool.status}\n${tool.output.take(2_500)}"
                 }
@@ -354,6 +364,9 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
                     )
                 }
             } catch (error: Exception) {
+                runCatching {
+                    withContext(Dispatchers.IO) { ledger.record(sessionId, "session_failed", status = error.javaClass.simpleName) }
+                }
                 mutableState.update {
                     it.copy(agentOutput = "Agent failed: ${error.message ?: error.javaClass.simpleName}")
                 }
