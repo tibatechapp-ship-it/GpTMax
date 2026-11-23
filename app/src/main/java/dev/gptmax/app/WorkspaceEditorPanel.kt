@@ -15,6 +15,23 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+private fun readWorkspaceUtf8Bounded(input: java.io.InputStream, maxBytes: Int): String {
+    val output = java.io.ByteArrayOutputStream(minOf(maxBytes, 8192))
+    val buffer = ByteArray(8192)
+    var total = 0
+    while (true) {
+        val count = input.read(buffer)
+        if (count < 0) break
+        total += count
+        require(total <= maxBytes) { "File exceeds 256 KiB editor limit." }
+        output.write(buffer, 0, count)
+    }
+    val decoder = Charsets.UTF_8.newDecoder()
+        .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+        .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+    return decoder.decode(java.nio.ByteBuffer.wrap(output.toByteArray())).toString()
+}
+
 private data class BrowserItem(val name: String, val path: String, val isDirectory: Boolean, val size: Long)
 
 @Composable
@@ -100,7 +117,7 @@ internal fun WorkspaceEditorPanel(treeUri: String?) {
                                             entry.path.split('/').forEach { file = file.findFile(it) ?: error("File not found.") }
                                             require(file.isFile) { "Not a regular file." }
                                             val input = context.contentResolver.openInputStream(file.uri) ?: error("Cannot read file.")
-                                            val value = input.use { it.readBytes().toString(Charsets.UTF_8) }
+                                            val value = input.use { readWorkspaceUtf8Bounded(it, 256 * 1024) }
                                             require(!value.contains('\u0000')) { "Binary files cannot be opened." }
                                             value
                                         }
@@ -138,7 +155,8 @@ internal fun WorkspaceEditorPanel(treeUri: String?) {
                                 val snapshot = editorText
                                 val result = withContext(Dispatchers.IO) {
                                     runCatching {
-                                        require(snapshot.length <= 256 * 1024 && !snapshot.contains('\u0000')) { "Content is invalid or exceeds 256 KiB." }
+                                        val snapshotBytes = snapshot.toByteArray(Charsets.UTF_8)
+                                        require(snapshotBytes.size <= 256 * 1024 && !snapshot.contains('\u0000')) { "Content is invalid or exceeds 256 KiB UTF-8." }
                                         val root = DocumentFile.fromTreeUri(context, Uri.parse(treeUri!!)) ?: error("Invalid project folder.")
                                         var parent = root
                                         val parts = filePath.split('/')
@@ -149,7 +167,7 @@ internal fun WorkspaceEditorPanel(treeUri: String?) {
                                         val temp = parent.createFile("text/plain", tempName) ?: error("Cannot create temporary save file.")
                                         try {
                                             val output = context.contentResolver.openOutputStream(temp.uri, "wt") ?: error("Cannot write temporary file.")
-                                            output.use { it.write(snapshot.toByteArray(Charsets.UTF_8)) }
+                                            output.use { it.write(snapshotBytes) }
                                             val backupName = parts.last() + ".gptmax-backup-" + System.nanoTime()
                                             val backup = if (target.renameTo(backupName)) target else null
                                             if (!temp.renameTo(parts.last())) {
