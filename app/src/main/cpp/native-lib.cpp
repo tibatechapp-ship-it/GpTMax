@@ -77,7 +77,7 @@ bool apply_model_chat_template(
         std::string & formatted_prompt,
         std::string & error) {
     const char * chat_template = llama_model_chat_template(model, nullptr);
-    if (chat_template == nullptr || chat_template[0] == '\\0') {
+    if (chat_template == nullptr || chat_template[0] == '\0') {
         // Base completion models may not carry a chat template.
         formatted_prompt = user_prompt;
         return true;
