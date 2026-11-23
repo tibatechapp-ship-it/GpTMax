@@ -13,6 +13,10 @@ android {
         applicationId = "dev.gptmax.app"
         minSdk = 26
         targetSdk = 35
+        ndk {
+            // M1 proof target: modern Android ARM64 devices only.
+            abiFilters += setOf("arm64-v8a")
+        }
         versionCode = 1
         versionName = "0.1.0"
 
