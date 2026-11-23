@@ -261,6 +261,64 @@ private fun GpTMaxHome(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    Text("Coding agent", style = MaterialTheme.typography.titleLarge)
+                    Text("Project workspace", style = MaterialTheme.typography.titleMedium)
+                    Text(state.workspaceLabel, style = MaterialTheme.typography.bodySmall)
+                    Button(
+                        onClick = onPickWorkspace,
+                        enabled = !state.agentRunning && !state.isBusy && !state.isGenerating,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Select project folder") }
+                    OutlinedTextField(
+                        value = state.agentRequest,
+                        onValueChange = onAgentRequestChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Engineering task") },
+                        minLines = 3,
+                        enabled = !state.agentRunning,
+                    )
+                    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = state.agentWriteEnabled,
+                            onCheckedChange = onAgentWriteToggle,
+                            enabled = !state.agentRunning,
+                        )
+                        Text("Allow this task to create and edit project files")
+                    }
+                    Text(
+                        "Read-only tools are enabled by default. File changes are limited to the selected folder.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = onRunAgent,
+                            enabled = state.modelReady && state.workspaceTreeUri != null &&
+                                !state.agentRunning && !state.isBusy && !state.isGenerating &&
+                                state.agentRequest.isNotBlank(),
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Start agent") }
+                        Button(
+                            onClick = onStopAgent,
+                            enabled = state.agentRunning,
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Stop agent") }
+                    }
+                    Text("Agent result", style = MaterialTheme.typography.titleMedium)
+                    Text(state.agentOutput, style = MaterialTheme.typography.bodySmall)
+                    state.agentToolLog.forEach { item ->
+                        Text(item, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     Text("Stored models", style = MaterialTheme.typography.titleLarge)
                     if (state.storedModels.isEmpty()) {
                         Text("No imported models.", style = MaterialTheme.typography.bodySmall)
@@ -300,9 +358,9 @@ private fun GpTMaxHome(
             }
             Text("Platform foundations", style = MaterialTheme.typography.titleMedium)
             FeatureRow("Model inference", "llama.cpp · native generation")
-            FeatureRow("Agent runtime", "Not connected yet")
-            FeatureRow("Code workspace", "Not implemented yet")
-            FeatureRow("Managed terminal", "Not implemented yet")
+            FeatureRow("Agent runtime", "Local model · bounded tool loop")
+            FeatureRow("Code workspace", "SAF project folder · scoped access")
+            FeatureRow("Managed process", "Allowlisted · approval-gated")
             Spacer(modifier = Modifier.height(4.dp))
             Button(
                 onClick = onRefresh,
