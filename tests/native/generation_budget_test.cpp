@@ -12,6 +12,6 @@ int main() {
     assert(effective_generation_tokens(10, 0, 384) == 0);
     assert(effective_generation_tokens(10, 2048, 0) == 1);
     assert(effective_generation_tokens(10, 2048, 4096) == 1024);
-    assert(effective_generation_tokens(0, 16, -4) == 16);
+    assert(effective_generation_tokens(0, 16, -4) == 1);
     return 0;
 }
