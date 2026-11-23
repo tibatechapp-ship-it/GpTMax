@@ -144,6 +144,60 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
         }
     }
 
+    fun loadStoredModel(sha256: String) {
+        val snapshot = mutableState.value
+        if (snapshot.isBusy || snapshot.isGenerating) return
+        viewModelScope.launch {
+            mutableState.update {
+                it.copy(isBusy = true, nativeStatus = "Preparing stored GGUF model…")
+            }
+            try {
+                val model = withContext(Dispatchers.IO) {
+                    val directory = File(getApplication<Application>().filesDir, "models")
+                    ModelStore.findBySha256(directory, sha256)
+                        ?: throw IllegalArgumentException("Stored model was not found.")
+                }
+                mutableState.update {
+                    it.copy(
+                        modelDetails = buildString {
+                            append(model.displayName)
+                            append("\nSize: ")
+                            append(model.sizeBytes)
+                            append(" bytes\nSHA-256: ")
+                            append(model.sha256)
+                        },
+                        nativeStatus = "Loading stored model and creating inference context…",
+                    )
+                }
+                val result = withContext(Dispatchers.IO) {
+                    NativeBridge.nativeLoadModel(model.file.absolutePath)
+                }
+                val ready = result == "MODEL_READY"
+                if (ready) {
+                    sessionPreferences.edit().putString("active_model_sha256", model.sha256).apply()
+                } else {
+                    sessionPreferences.edit().remove("active_model_sha256").apply()
+                }
+                mutableState.update {
+                    it.copy(
+                        modelReady = ready,
+                        activeModelSha256 = if (ready) model.sha256 else null,
+                        nativeStatus = if (ready) "Stored GGUF loaded; inference context ready."
+                            else "Stored model load failed: $result",
+                    )
+                }
+            } catch (error: Exception) {
+                mutableState.update {
+                    it.copy(
+                        nativeStatus = "Could not load stored model: ${error.message ?: error.javaClass.simpleName}"
+                    )
+                }
+            } finally {
+                mutableState.update { it.copy(isBusy = false) }
+            }
+        }
+    }
+
     fun deleteModel(sha256: String) {
         val snapshot = mutableState.value
         if (snapshot.isBusy || snapshot.isGenerating) return
