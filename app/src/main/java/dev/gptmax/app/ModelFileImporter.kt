@@ -22,10 +22,11 @@ internal data class ImportedModel(
 internal object ModelFileImporter {
     suspend fun import(context: Context, uri: Uri): ImportedModel = withContext(Dispatchers.IO) {
         val metadata = queryMetadata(context, uri)
+        val expectedSize = metadata.second
         require(metadata.first.endsWith(".gguf", ignoreCase = true)) {
             "Select a GGUF model file."
         }
-        require(metadata.second == null || metadata.second > 0L) {
+        require(expectedSize == null || expectedSize > 0L) {
             "The selected file is empty."
         }
 
@@ -34,7 +35,7 @@ internal object ModelFileImporter {
             "Could not create private model directory."
         }
         val usableBytes = modelsDirectory.usableSpace
-        if (metadata.second != null && metadata.second > usableBytes) {
+        if (expectedSize != null && expectedSize > usableBytes) {
             throw IllegalStateException("Not enough app storage for this model.")
         }
 
@@ -76,7 +77,7 @@ internal object ModelFileImporter {
             require(magic.contentEquals(byteArrayOf(0x47, 0x47, 0x55, 0x46))) {
                 "Invalid GGUF file: expected GGUF magic header."
             }
-            if (metadata.second != null && metadata.second != copied) {
+            if (expectedSize != null && expectedSize != copied) {
                 throw IllegalStateException("File size changed during import; incomplete copy rejected.")
             }
             check(temporary.renameTo(destination)) {
