@@ -190,7 +190,6 @@ Java_dev_gptmax_app_NativeBridge_nativeGenerate(
         return to_java_string(env, "No model is loaded.");
     }
 
-    g_cancel_requested.store(false, std::memory_order_relaxed);
     llama_set_abort_callback(g_context, abort_requested, nullptr);
 
     const llama_vocab * vocab = llama_model_get_vocab(g_model);
@@ -348,6 +347,11 @@ Java_dev_gptmax_app_NativeBridge_nativeGenerate(
             "Generation finished: prompt_tokens=%d generated_tokens=%d ended=%d",
             actual_tokens, generated, ended ? 1 : 0);
     return to_java_string(env, "GENERATION_COMPLETE:" + std::to_string(generated));
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_dev_gptmax_app_NativeBridge_nativeBeginGeneration(JNIEnv *, jobject) {
+    g_cancel_requested.store(false, std::memory_order_relaxed);
 }
 
 extern "C" JNIEXPORT void JNICALL
