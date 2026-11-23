@@ -23,159 +23,44 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import androidx.lifecycle.ViewModelProvider
 
 class MainActivity : ComponentActivity() {
-    private var nativeStatus by mutableStateOf("Initializing native runtime…")
-    private var buildInfo by mutableStateOf("Reading backend version…")
-    private var modelDetails by mutableStateOf("No model selected")
-    private var prompt by mutableStateOf("Write a short Python function that checks whether a number is prime.")
-    private var generatedText by mutableStateOf("")
-    private var temperature by mutableStateOf(0.7f)
-    private var isBusy by mutableStateOf(false)
-    private var isGenerating by mutableStateOf(false)
-    private var modelReady by mutableStateOf(false)
+    private lateinit var viewModel: GpTMaxViewModel
 
     private val modelPicker = registerForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri: Uri? ->
-        if (uri != null) importAndLoadModel(uri)
+        if (uri != null) viewModel.importAndLoadModel(uri)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        lifecycleScope.launch {
-            val info = withContext(Dispatchers.IO) {
-                runCatching { NativeBridge.nativeBuildInfo() }
-                    .getOrElse { "Native backend unavailable: ${it.message ?: "unknown error"}" }
-            }
-            buildInfo = info
-            nativeStatus = withContext(Dispatchers.IO) {
-                runCatching { NativeBridge.backendStatus() }
-                    .getOrElse { "Native backend unavailable: ${it.message ?: "unknown error"}" }
-            }
-        }
+        viewModel = ViewModelProvider(this)[GpTMaxViewModel::class.java]
         setContent {
+            val state by viewModel.state.collectAsState()
             MaterialTheme {
                 GpTMaxHome(
-                    nativeStatus = nativeStatus,
-                    buildInfo = buildInfo,
-                    modelDetails = modelDetails,
-                    prompt = prompt,
-                    generatedText = generatedText,
-                    temperature = temperature,
-                    isBusy = isBusy,
-                    isGenerating = isGenerating,
-                    modelReady = modelReady,
-                    onPromptChange = { prompt = it },
-                    onTemperatureChange = { temperature = it },
+                    state = state,
+                    onPromptChange = viewModel::updatePrompt,
+                    onTemperatureChange = viewModel::updateTemperature,
                     onPickModel = { modelPicker.launch(arrayOf("*/*")) },
-                    onGenerate = { generate() },
-                    onCancel = { NativeBridge.nativeCancelGeneration() },
-                    onRefresh = { refreshNativeStatus() },
+                    onGenerate = viewModel::generate,
+                    onCancel = viewModel::cancelGeneration,
+                    onRefresh = viewModel::refreshRuntimeInfo,
                 )
             }
         }
-    }
-
-    private fun refreshNativeStatus() {
-        lifecycleScope.launch {
-            nativeStatus = withContext(Dispatchers.IO) {
-                runCatching { NativeBridge.backendStatus() }
-                    .getOrElse { "Native backend error: ${it.message ?: "unknown error"}" }
-            }
-        }
-    }
-
-    private fun importAndLoadModel(uri: Uri) {
-        lifecycleScope.launch {
-            isBusy = true
-            modelReady = false
-            modelDetails = "Importing GGUF securely into app-private storage…"
-            try {
-                val imported = ModelFileImporter.import(this@MainActivity, uri)
-                modelDetails = buildString {
-                    append(imported.displayName)
-                    append("\nSize: ")
-                    append(imported.sizeBytes)
-                    append(" bytes\nSHA-256: ")
-                    append(imported.sha256)
-                }
-                nativeStatus = "Loading model and creating inference context…"
-                val loadResult = withContext(Dispatchers.IO) {
-                    NativeBridge.nativeLoadModel(imported.file.absolutePath)
-                }
-                modelReady = loadResult == "MODEL_READY"
-                nativeStatus = if (modelReady) {
-                    "GGUF loaded; inference context ready."
-                } else {
-                    "Model load failed: $loadResult"
-                }
-            } catch (error: Exception) {
-                nativeStatus = "Model import/load failed: ${error.message ?: error.javaClass.simpleName}"
-            } finally {
-                isBusy = false
-            }
-        }
-    }
-
-    private fun generate() {
-        if (isBusy || isGenerating || !modelReady || prompt.isBlank()) return
-        generatedText = ""
-        isGenerating = true
-        nativeStatus = "Generating locally…"
-        val currentPrompt = prompt
-        val currentTemperature = temperature
-        lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    NativeBridge.nativeGenerate(
-                        currentPrompt,
-                        256,
-                        currentTemperature,
-                        object : TokenCallback {
-                            override fun onToken(text: String) {
-                                runOnUiThread { generatedText += text }
-                            }
-                        },
-                    )
-                }.getOrElse { "Generation error: ${it.message ?: it.javaClass.simpleName}" }
-            }
-            isGenerating = false
-            nativeStatus = when {
-                result == "CANCELLED" -> "Generation cancelled."
-                result.startsWith("GENERATION_COMPLETE:") ->
-                    "Local generation complete · ${result.substringAfter(':')} tokens."
-                else -> result
-            }
-        }
-    }
-
-    override fun onDestroy() {
-        if (isGenerating) NativeBridge.nativeCancelGeneration()
-        super.onDestroy()
     }
 }
 
 @androidx.compose.runtime.Composable
 private fun GpTMaxHome(
-    nativeStatus: String,
-    buildInfo: String,
-    modelDetails: String,
-    prompt: String,
-    generatedText: String,
-    temperature: Float,
-    isBusy: Boolean,
-    isGenerating: Boolean,
-    modelReady: Boolean,
+    state: InferenceUiState,
     onPromptChange: (String) -> Unit,
     onTemperatureChange: (Float) -> Unit,
     onPickModel: () -> Unit,
@@ -206,8 +91,8 @@ private fun GpTMaxHome(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text("Native inference runtime", style = MaterialTheme.typography.titleLarge)
-                    Text(nativeStatus, style = MaterialTheme.typography.bodyMedium)
-                    Text(buildInfo, style = MaterialTheme.typography.bodySmall)
+                    Text(state.nativeStatus, style = MaterialTheme.typography.bodyMedium)
+                    Text(state.buildInfo, style = MaterialTheme.typography.bodySmall)
                 }
             }
             Card(
@@ -219,13 +104,13 @@ private fun GpTMaxHome(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text("Local GGUF model", style = MaterialTheme.typography.titleLarge)
-                    Text(modelDetails, style = MaterialTheme.typography.bodySmall)
+                    Text(state.modelDetails, style = MaterialTheme.typography.bodySmall)
                     Button(
                         onClick = onPickModel,
-                        enabled = !isBusy && !isGenerating,
+                        enabled = !state.isBusy && !state.isGenerating,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text(if (isBusy) "Please wait…" else "Import and load GGUF model")
+                        Text(if (state.isBusy) "Please wait…" else "Import and load GGUF model")
                     }
                 }
             }
@@ -239,35 +124,35 @@ private fun GpTMaxHome(
                 ) {
                     Text("Local inference", style = MaterialTheme.typography.titleLarge)
                     OutlinedTextField(
-                        value = prompt,
+                        value = state.prompt,
                         onValueChange = onPromptChange,
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("Prompt") },
                         minLines = 3,
-                        enabled = !isGenerating,
+                        enabled = !state.isGenerating,
                     )
-                    Text("Temperature: ${"%.1f".format(temperature)}")
+                    Text("Temperature: ${"%.1f".format(state.temperature)}")
                     Slider(
-                        value = temperature,
+                        value = state.temperature,
                         onValueChange = onTemperatureChange,
                         valueRange = 0f..1.5f,
-                        enabled = !isGenerating,
+                        enabled = !state.isGenerating,
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
                             onClick = onGenerate,
-                            enabled = modelReady && !isBusy && !isGenerating && prompt.isNotBlank(),
+                            enabled = state.modelReady && !state.isBusy && !state.isGenerating && state.prompt.isNotBlank(),
                             modifier = Modifier.weight(1f),
                         ) { Text("Generate") }
                         Button(
                             onClick = onCancel,
-                            enabled = isGenerating,
+                            enabled = state.isGenerating,
                             modifier = Modifier.weight(1f),
                         ) { Text("Stop") }
                     }
                     Text("Output", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        generatedText.ifBlank { "Generated tokens will appear here as the model responds." },
+                        state.generatedText.ifBlank { "Generated tokens will appear here as the model responds." },
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
@@ -278,7 +163,11 @@ private fun GpTMaxHome(
             FeatureRow("Code workspace", "Not implemented yet")
             FeatureRow("Managed terminal", "Not implemented yet")
             Spacer(modifier = Modifier.height(4.dp))
-            Button(onClick = onRefresh, enabled = !isBusy && !isGenerating, modifier = Modifier.fillMaxWidth()) {
+            Button(
+                onClick = onRefresh,
+                enabled = !state.isBusy && !state.isGenerating,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
                 Text("Refresh native status")
             }
         }
