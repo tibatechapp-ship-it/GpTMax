@@ -375,7 +375,10 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
                     cancellation = cancellation,
                     onToolResult = { tool ->
                         withContext(Dispatchers.IO) {
-                            ledger.record(sessionId, "tool_result", tool.toolName, tool.status.name, tool.durationMs, tool.output)\n                            contextEngine.observeTool(sessionId, tool.toolName, tool.status.name,\n                                if (tool.toolName == "file.read") "File read succeeded; source content is intentionally not copied into persistent tool history." else tool.output.take(700) )\n                            contextEngine.addStage(sessionId, "tool:${tool.toolName}", tool.status.name,
+                            ledger.record(sessionId, "tool_result", tool.toolName, tool.status.name, tool.durationMs, tool.output)
+                            contextEngine.observeTool(sessionId, tool.toolName, tool.status.name,
+                                if (tool.toolName == "file.read") "File read succeeded; source content is intentionally not copied into persistent tool history." else tool.output.take(700) )
+                            contextEngine.addStage(sessionId, "tool:${tool.toolName}", tool.status.name,
                                 if (tool.toolName == "file.read") "File read completed; source content is not persisted." else tool.output.take(300))
                         }
                         val entry = tool.toolName + " · " + tool.status + "\n" + tool.output.take(2_500)
@@ -385,7 +388,8 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
                     },
                 )
                 withContext(Dispatchers.IO) {
-                    ledger.record(sessionId, "session_finished", status = result.status.name, output = result.answer)\n                    contextEngine.addStage(sessionId, "session", result.status.name, result.answer.take(500))
+                    ledger.record(sessionId, "session_finished", status = result.status.name, output = result.answer)
+                    contextEngine.addStage(sessionId, "session", result.status.name, result.answer.take(500))
                     contextEngine.checkpoint(
                         sessionId,
                         snapshot.agentRequest.take(1_000),
