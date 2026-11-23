@@ -19,6 +19,7 @@ import com.tibatech.gptmax.data.repo.WorkspaceRepository
 import com.tibatech.gptmax.data.settings.GpTMaxSettings
 import java.io.File
 import java.util.UUID
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -50,10 +51,12 @@ class ChatViewModel : ViewModel() {
         db.messageDao().observe(sessionId)
             .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    private var streamJob: Job? = null
+
     fun send(text: String) {
         val trimmed = text.trim()
         if (trimmed.isEmpty() || _streaming.value) return
-        viewModelScope.launch {
+        streamJob = viewModelScope.launch {
             _streaming.value = true
             _streamText.value = ""
             db.messageDao().insert(MessageEntity(sessionId = sessionId, role = "user", content = trimmed))
@@ -89,7 +92,9 @@ class ChatViewModel : ViewModel() {
         }
     }
 
+    /** Per-request cancellation (review #5): cancels the stream job, not just the engine. */
     fun cancel() {
+        streamJob?.cancel()
         ServiceLocator.localEngine.cancel()
         _streaming.value = false
     }
@@ -104,12 +109,17 @@ class AgentViewModel : ViewModel() {
     private val core = ServiceLocator.agentCore
     private val approval = ServiceLocator.approvalGate
     private val db = ServiceLocator.database
+    private val runState = ServiceLocator.agentRunState
     private var runRowId: Long = 0
+    private var runJob: Job? = null
 
     val phase = MutableStateFlow<AgentPhase>(AgentPhase.IDLE)
     val steps = MutableStateFlow<List<AgentStep>>(emptyList())
     val logs = MutableStateFlow<List<String>>(emptyList())
     val approvalRequest = approval.pending
+
+    /** Shared flag other screens (Models) guard destructive actions on (review #3). */
+    val agentRunning = runState.isRunning
 
     init {
         viewModelScope.launch {
@@ -122,8 +132,9 @@ class AgentViewModel : ViewModel() {
                         "approval needed: ${e.step.tool} ${e.step.description}",
                     )
                     is AgentEvent.Log -> appendLog(e.message)
+                    is AgentEvent.Cancelled -> appendLog("run cancelled by user")
                     is AgentEvent.Completed -> {
-                        appendLog("completed: ${e.summary}")
+                        appendLog("completed: ${e.summary} (${e.durationMs} ms)")
                         if (runRowId != 0L) {
                             db.agentRunDao().finish(
                                 runRowId, AgentPhase.DONE.name, e.summary,
@@ -149,12 +160,23 @@ class AgentViewModel : ViewModel() {
     fun start(goal: String) {
         val trimmed = goal.trim()
         if (trimmed.isEmpty()) return
+        if (runState.isRunning.value) return // one run at a time (review #5)
         steps.value = emptyList()
         logs.value = emptyList()
-        viewModelScope.launch {
-            runRowId = db.agentRunDao().insert(AgentRunEntity(goal = trimmed, phase = "PLANNING"))
-            core.run(AgentTask(id = UUID.randomUUID().toString(), goal = trimmed))
+        runJob = viewModelScope.launch {
+            runState.start()
+            try {
+                runRowId = db.agentRunDao().insert(AgentRunEntity(goal = trimmed, phase = "PLANNING"))
+                core.run(AgentTask(id = UUID.randomUUID().toString(), goal = trimmed))
+            } finally {
+                runState.stop()
+            }
         }
+    }
+
+    /** Per-request cancellation (review #5): stops the run at the next step boundary. */
+    fun cancel() {
+        runJob?.cancel()
     }
 
     fun respond(approved: Boolean) = approval.respond(approved)
@@ -227,12 +249,24 @@ class ModelsViewModel : ViewModel() {
     }
 
     fun unload() {
+        // Review #3: never release the model under an active agent session.
+        if (ServiceLocator.agentRunState.isRunning.value) {
+            engineError.value = "cannot unload: the coding agent is running — stop the task first"
+            return
+        }
         local.unload()
         engineLoaded.value = false
         loadedModel.value = ""
     }
 
     fun delete(file: File) {
+        // Review #3: deleting model files mid-run unloads the native model
+        // underneath an active session — refuse and tell the user why.
+        if (ServiceLocator.agentRunState.isRunning.value) {
+            engineError.value =
+                "cannot delete ${file.name}: the coding agent is running — stop the task first"
+            return
+        }
         models.delete(file)
         refresh()
     }
@@ -251,6 +285,9 @@ class EditorViewModel : ViewModel() {
     val content = MutableStateFlow("")
     val dirty = MutableStateFlow(false)
 
+    /** Reason the last save was blocked (policy or write guard) — shown by the editor UI. */
+    val saveError = MutableStateFlow("")
+
     val hasRoot: StateFlow<Boolean> =
         workspace.root.map { it != null }
             .stateIn(viewModelScope, SharingStarted.Eagerly, workspace.root.value != null)
@@ -268,6 +305,7 @@ class EditorViewModel : ViewModel() {
             content.value = workspace.read(path) ?: ""
             openFile.value = path
             dirty.value = false
+            saveError.value = ""
         }
     }
 
@@ -280,8 +318,15 @@ class EditorViewModel : ViewModel() {
         val path = openFile.value
         if (path.isBlank()) return
         viewModelScope.launch {
-            workspace.write(path, content.value)
-            dirty.value = false
+            when (val result = workspace.write(path, content.value)) {
+                is WorkspaceRepository.WriteResult.Written -> {
+                    dirty.value = false
+                    saveError.value = ""
+                }
+                is WorkspaceRepository.WriteResult.Blocked -> {
+                    saveError.value = result.reason
+                }
+            }
         }
     }
 
@@ -293,7 +338,7 @@ class EditorViewModel : ViewModel() {
                 if (node.isDir) walk(node.path, depth + 1) else out += node
             }
         }
-        walk("", 0)
+        walk("")
         return out.sortedBy { it.path }
     }
 }
