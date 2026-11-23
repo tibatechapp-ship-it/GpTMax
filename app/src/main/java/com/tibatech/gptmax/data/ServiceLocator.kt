@@ -52,7 +52,7 @@ object ServiceLocator {
         localEngine = LocalEngine()
         cloudBridge = CloudBridge(configProvider = { settings.snapshot().provider })
         router = InferenceRouter(settings, localEngine, cloudBridge)
-        approvalGate = ApprovalGate(autoApproveProvider = {
+        approvalGate = ApprovalGate(autoApprove = {
             runCatching { settings.snapshot().autoApproveWrites }.getOrDefault(false)
         })
         agentCore = AgentCore(
