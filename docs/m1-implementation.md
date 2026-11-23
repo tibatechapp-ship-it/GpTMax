@@ -16,6 +16,8 @@
 - JNI string access uses a scoped RAII guard so `ReleaseStringChars` runs on every C++ return or exception path.
 - CI compiles and runs native Unicode regression tests covering Arabic, mixed Arabic/English, supplementary-plane emoji, isolated UTF-16 surrogates, overlong UTF-8, UTF-8 encoded surrogates, and out-of-range code points.
 - The UI exposes a prompt, temperature control, generated output, and a stop action.
+- Imported models are stored by SHA-256 content identity with a private metadata sidecar; identical imports reuse the existing file instead of consuming additional storage.
+- The model registry lists stored GGUF files, cleans incomplete partial files, handles malformed metadata without hiding valid model files, and supports explicit deletion after an in-app confirmation. Deleting the currently loaded model unloads the native runtime first.
 - Generation cancellation is signaled atomically and wired to llama.cpp's abort callback. Model unload/shutdown signals cancellation before waiting for the native operation lock, preventing context destruction during active generation.
 
 ## Toolchain baseline
@@ -34,12 +36,13 @@ The current generation path uses the pinned revision's batch and sampler APIs. J
 
 ## Not yet proven or complete
 
-- Latest verified Android CI run: 45096392824 (success), including native Unicode regression tests, debug APK assembly, and artifact upload.
+- Latest verified Android CI run for the model-store baseline: 45102017084 (success), including native Unicode regression tests, Android debug assembly, unit tests, and APK artifact upload. The produced APK contains `lib/arm64-v8a/libgptmax_native.so`; this confirms ABI packaging, not device execution.
 - Actual GGUF load and generated text on a physical Android ARM64 device.
 - Memory/thermal profiling, repeated load/unload stress, and low-memory behavior.
 - Robust device-specific context/thread configuration and latency optimization.
 - Coding agent, workspace editor, project indexing, and managed terminal execution.
 - Stress tests for repeated cancellation and Activity recreation while native generation is active.
+- Instrumented Android tests for import, model reload, delete, and low-memory behavior.
 
 A successful CI build proves compilation and packaging only. It does not prove that a selected model fits device RAM or that inference works on physical hardware.
 
