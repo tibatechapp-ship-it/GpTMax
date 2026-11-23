@@ -53,11 +53,7 @@ internal fun WorkspaceEditorPanel(treeUri: String?) {
                     folder.listFiles()
                         .filter { item ->
                             val name = item.name.orEmpty()
-                            name.isNotBlank() &&
-                                name !in setOf(".git", ".gradle", "node_modules", "build", ".idea") &&
-                                !name.endsWith(".pem", true) &&
-                                !name.endsWith(".key", true) &&
-                                name.lowercase() !in setOf(".env", ".env.local", ".npmrc", ".netrc", "credentials.json", "secrets.json")
+                            isSafeWorkspaceEditorEntry(name, item.isDirectory)
                         }
                         .sortedWith(compareBy<DocumentFile> { !it.isDirectory }.thenBy { it.name.orEmpty().lowercase() })
                         .take(300)
@@ -201,10 +197,7 @@ internal fun WorkspaceEditorPanel(treeUri: String?) {
                         busy = true
                         val result = withContext(Dispatchers.IO) {
                             runCatching {
-                                require(name.isNotBlank() && name.length <= 120 && !name.contains('/') && !name.contains('\\') && name != "." && name != "..") { "Invalid file name." }
-                                require(name.lowercase() !in setOf(".env", ".env.local", ".npmrc", ".netrc", "credentials.json", "secrets.json") && !name.endsWith(".key", true) && !name.endsWith(".pem", true)) {
-                                    "Creating secret files through this editor is blocked."
-                                }
+                                validateWorkspaceEditorFileName(name)?.let { error(it) }
                                 val root = DocumentFile.fromTreeUri(context, Uri.parse(treeUri!!)) ?: error("Invalid project folder.")
                                 var parent = root
                                 if (directory.isNotBlank()) directory.split('/').forEach { parent = parent.findFile(it) ?: error("Folder not found.") }
