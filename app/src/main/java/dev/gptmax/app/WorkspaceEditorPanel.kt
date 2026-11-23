@@ -15,23 +15,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private fun readWorkspaceUtf8Bounded(input: java.io.InputStream, maxBytes: Int): String {
-    val output = java.io.ByteArrayOutputStream(minOf(maxBytes, 8192))
-    val buffer = ByteArray(8192)
-    var total = 0
-    while (true) {
-        val count = input.read(buffer)
-        if (count < 0) break
-        total += count
-        require(total <= maxBytes) { "File exceeds 256 KiB editor limit." }
-        output.write(buffer, 0, count)
-    }
-    val decoder = Charsets.UTF_8.newDecoder()
-        .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
-        .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
-    return decoder.decode(java.nio.ByteBuffer.wrap(output.toByteArray())).toString()
-}
-
 private data class BrowserItem(val name: String, val path: String, val isDirectory: Boolean, val size: Long)
 
 @Composable
