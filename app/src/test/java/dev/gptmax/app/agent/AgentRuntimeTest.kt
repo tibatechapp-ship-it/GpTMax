@@ -107,6 +107,38 @@ class AgentRuntimeTest {
         assertEquals(AgentRunStatus.CANCELLED, result.status)
     }
 
+    @Test
+    fun observationBudgetDropsOldestObservationsFirst() = kotlinx.coroutines.runBlocking {
+        val tool = FakeTool(output = { call -> "payload-${call.id}-" + "x".repeat(800) })
+        val model = RecordingModel(
+            List(4) {
+                AgentModelAction.CallTool(AgentToolCall("call-$it", "fake.read", emptyMap()))
+            } + AgentModelAction.FinalAnswer("done"),
+        )
+        val result = AgentRuntime(
+            model,
+            AgentToolRegistry(listOf(tool)),
+            AgentRunLimits(maxToolCalls = 5, maxObservationChars = 1_000, maxObservationHistoryChars = 1_600),
+        ).run("Budget test", setOf(ToolRisk.READ_ONLY))
+
+        assertEquals(AgentRunStatus.COMPLETED, result.status)
+        val observations = model.lastObservations
+        assertTrue("expected an oldest-dropped marker", observations.first().text.contains("dropped"))
+        assertTrue("newest observation must survive", observations.last().text.contains("call-3"))
+        assertTrue("oldest observation must be dropped", observations.none { it.text.contains("call-0") })
+    }
+
+    @Test
+    fun runResultCarriesTotalDuration() = kotlinx.coroutines.runBlocking {
+        val result = AgentRuntime(
+            FakeModel(listOf(AgentModelAction.FinalAnswer("ok"))),
+            AgentToolRegistry(emptyList()),
+        ).run("Timing", setOf(ToolRisk.READ_ONLY))
+
+        assertEquals(AgentRunStatus.COMPLETED, result.status)
+        assertTrue(result.durationMs >= 0)
+    }
+
     private class FakeModel(private val actions: List<AgentModelAction>) : AgentModel {
         private var index = 0
         override suspend fun nextAction(
@@ -119,8 +151,25 @@ class AgentRuntimeTest {
         }
     }
 
+    private class RecordingModel(private val actions: List<AgentModelAction>) : AgentModel {
+        var lastObservations: List<AgentObservation> = emptyList()
+        private var index = 0
+        override suspend fun nextAction(
+            userRequest: String,
+            observations: List<AgentObservation>,
+            availableTools: List<AgentToolSpec>,
+            step: Int,
+        ): AgentModelAction {
+            lastObservations = observations
+            return actions.getOrElse(index++) {
+                AgentModelAction.FinalAnswer("No further action.")
+            }
+        }
+    }
+
     private class FakeTool(
         private val risk: ToolRisk = ToolRisk.READ_ONLY,
+        private val output: (AgentToolCall) -> String = { "test output" },
     ) : AgentTool {
         var executions = 0
         override val spec = AgentToolSpec(
@@ -133,7 +182,7 @@ class AgentRuntimeTest {
             cancellation: AtomicBoolean,
         ): AgentToolResult {
             executions++
-            return AgentToolResult(spec.name, call.id, ToolExecutionStatus.SUCCESS, "test output")
+            return AgentToolResult(spec.name, call.id, ToolExecutionStatus.SUCCESS, output(call))
         }
     }
 }

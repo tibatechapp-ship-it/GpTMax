@@ -72,10 +72,13 @@ data class AgentObservation(
 data class AgentRunLimits(
     val maxToolCalls: Int = 12,
     val maxObservationChars: Int = 12_000,
+    /** Total character budget for the observation history; newest observations win (review #5). */
+    val maxObservationHistoryChars: Int = 24_000,
 ) {
     init {
         require(maxToolCalls in 1..100)
         require(maxObservationChars in 256..100_000)
+        require(maxObservationHistoryChars in 1_000..200_000)
     }
 }
 
@@ -84,6 +87,8 @@ data class AgentRunResult(
     val answer: String,
     val toolResults: List<AgentToolResult>,
     val steps: Int,
+    /** Review finding #6: total wall-clock time of the run, for on-device performance measurement. */
+    val durationMs: Long = 0,
 )
 
 enum class AgentRunStatus { COMPLETED, BUDGET_EXHAUSTED, CANCELLED, MODEL_ERROR }
@@ -102,36 +107,39 @@ class AgentRuntime(
         onToolResult: suspend (AgentToolResult) -> Unit = {},
     ): AgentRunResult {
         require(request.isNotBlank()) { "Task request must not be blank." }
+        val startedNanos = System.nanoTime()
+        fun elapsedMs(): Long = (System.nanoTime() - startedNanos) / 1_000_000L
         val observations = mutableListOf<AgentObservation>()
         val results = mutableListOf<AgentToolResult>()
         var calls = 0
 
         while (calls < limits.maxToolCalls) {
             if (cancellation.get()) {
-                return AgentRunResult(AgentRunStatus.CANCELLED, "Task cancelled.", results, calls)
+                return AgentRunResult(AgentRunStatus.CANCELLED, "Task cancelled.", results, calls, elapsedMs())
             }
 
             val action = try {
                 model.nextAction(request, observations.toList(), registry.allSpecs(), calls)
             } catch (error: Exception) {
                 if (cancellation.get()) {
-                    return AgentRunResult(AgentRunStatus.CANCELLED, "Task cancelled.", results, calls)
+                    return AgentRunResult(AgentRunStatus.CANCELLED, "Task cancelled.", results, calls, elapsedMs())
                 }
                 return AgentRunResult(
                     AgentRunStatus.MODEL_ERROR,
                     "Model action failed: ${error.message ?: error.javaClass.simpleName}",
                     results,
                     calls,
+                    elapsedMs(),
                 )
             }
 
             if (cancellation.get()) {
-                return AgentRunResult(AgentRunStatus.CANCELLED, "Task cancelled.", results, calls)
+                return AgentRunResult(AgentRunStatus.CANCELLED, "Task cancelled.", results, calls, elapsedMs())
             }
 
             when (action) {
                 is AgentModelAction.FinalAnswer ->
-                    return AgentRunResult(AgentRunStatus.COMPLETED, action.text, results, calls)
+                    return AgentRunResult(AgentRunStatus.COMPLETED, action.text, results, calls, elapsedMs())
 
                 is AgentModelAction.CallTool -> {
                     calls++
@@ -149,6 +157,7 @@ class AgentRuntime(
                         role = "tool",
                         text = "Tool ${action.call.name} status=${result.status}\n$safeOutput",
                     )
+                    trimObservations(observations)
                 }
             }
         }
@@ -158,7 +167,32 @@ class AgentRuntime(
             "Tool-call budget reached; stopped to prevent an unbounded agent loop.",
             results,
             calls,
+            elapsedMs(),
         )
+    }
+
+    /**
+     * Review finding #5: the observation history grew without bound, so old, large outputs
+     * squeezed the newest results out of the model context. This keeps the newest observations
+     * within the configured budget and records a short marker for whatever was dropped.
+     */
+    private fun trimObservations(observations: MutableList<AgentObservation>) {
+        var total = observations.sumOf { it.text.length }
+        if (total <= limits.maxObservationHistoryChars) return
+        var dropped = 0
+        while (total > limits.maxObservationHistoryChars && observations.size > 1) {
+            total -= observations.removeAt(0).text.length
+            dropped++
+        }
+        if (dropped > 0) {
+            observations.add(
+                0,
+                AgentObservation(
+                    "system",
+                    "[context budget: $dropped oldest observation(s) dropped; newest tool results are prioritized]",
+                ),
+            )
+        }
     }
 
     private suspend fun executeToolCall(
