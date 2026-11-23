@@ -4,7 +4,7 @@
 
 GpTMax is being designed as an AI development environment inspired by modern agentic code editors: project explorer, code editor, integrated agent, controlled terminal/runtime, Git-aware changes, and build/test feedback—powered first by on-device GGUF inference on Android ARM64.
 
-> **Current implementation:** Android ARM64 app scaffold, Jetpack Compose UI, C++17 JNI bridge, pinned llama.cpp source, model loading/context creation, Android Storage Access Framework import into app-private storage, SHA-256 verification, and CI build/test workflow. The app validates the GGUF magic header and invokes native model loading. Token generation, streaming, editor, managed terminal, autonomous coding, and real-device inference proof remain incomplete.
+> **Current implementation:** Android ARM64 app scaffold, Jetpack Compose UI, C++17 JNI bridge, pinned llama.cpp source, SAF import into app-private storage with SHA-256 and GGUF magic validation, native model/context loading, prompt tokenization, prompt evaluation, sampling, token-to-text conversion, streaming callback, and cooperative cancellation. Android CI validates compilation and unit tests. Physical-device generation, memory/thermal profiling, editor, managed terminal, and coding-agent execution are not yet proven or complete.
 
 ## Product north star
 
@@ -23,7 +23,7 @@ Turn a natural-language engineering task into a **reviewable, validated change**
 
 - **AI Code Studio:** editor, project explorer, search, tabs, diff, Git changes, and an agent workspace designed for Android.
 - **Agent Core:** task planner, context builder, tool router, execution controller, failure analyzer, reviewer, and task ledger.
-- **Local Inference:** GGUF model loading through a pinned native backend, initially llama.cpp, behind a stable GpTMax inference interface.
+- **Local Inference:** GGUF loading and token generation through a pinned native backend, initially llama.cpp, behind a stable GpTMax inference interface.
 - **Integrated Runtime:** an application-owned terminal/process and tool layer. Termux is not a product dependency. Runtime capabilities must be verified on Android; unsupported or resource-heavy builds may use an optional, explicitly configured build worker.
 - **Code Intelligence:** ignore-aware file inventory, symbol-aware retrieval, semantic search, dependency relationships, and project decisions.
 - **Trust and evidence:** scoped permissions, task snapshots, cancellation, resource limits, visible diffs, and honest test status.
@@ -51,7 +51,7 @@ Install the Android SDK components listed in `.github/workflows/android-build.ym
 
 ## Inference and optimization
 
-The first technical proof remains Android ARM64 inference: build the pinned llama.cpp backend, import and validate a user-selected GGUF model, load it into a native context, then implement token generation and prove local output on a real device. Model optimization and LookAtMyQuant-inspired quantization research remain a separate, measured track after a stable baseline exists. MLX-specific runtime code is not an Android backend and will not be transplanted directly.
+M1 now includes an implemented native generation path: tokenize a prompt, evaluate it, sample tokens, stream decoded text to Compose, and accept cancellation requests. This code must still pass Android CI and be exercised with a compatible GGUF on a physical ARM64 device. Model optimization and LookAtMyQuant-inspired quantization research remain a separate, measured track after a stable baseline exists. MLX-specific runtime code is not an Android backend and will not be transplanted directly.
 
 ## Platform principles
 
