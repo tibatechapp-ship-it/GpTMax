@@ -53,6 +53,7 @@ class MainActivity : ComponentActivity() {
                     onCancel = viewModel::cancelGeneration,
                     onRefresh = viewModel::refreshRuntimeInfo,
                     onDeleteModel = viewModel::deleteModel,
+                    onUnloadModel = viewModel::unloadModel,
                 )
             }
         }
@@ -69,6 +70,7 @@ private fun GpTMaxHome(
     onCancel: () -> Unit,
     onRefresh: () -> Unit,
     onDeleteModel: (String) -> Unit,
+    onUnloadModel: () -> Unit,
 ) {
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -113,6 +115,13 @@ private fun GpTMaxHome(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(if (state.isBusy) "Please wait…" else "Import and load GGUF model")
+                    }
+                    if (state.modelReady) {
+                        Button(
+                            onClick = onUnloadModel,
+                            enabled = !state.isBusy && !state.isGenerating,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Unload model (keep file)") }
                     }
                 }
             }
