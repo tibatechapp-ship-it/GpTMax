@@ -2,9 +2,11 @@
 
 ## Current scope
 
-This initial implementation establishes a real Android application module, a Compose entry screen, a C++17 JNI shared library, pinned Gradle/Android toolchain configuration, unit-test wiring, and an Android CI build.
+The repository now includes a real Android application module, a Compose entry screen, a C++17 JNI shared library, pinned Gradle/Android toolchain configuration, unit-test wiring, and an Android CI build.
 
-It is **not yet an inference proof**. llama.cpp is not linked, GGUF loading is not implemented, and no device generation benchmark exists.
+The first CI attempt exposed that Google removed the deprecated Android SDK `tools` package. The workflow now uses the maintained `android-actions/setup-android@v4` action and installs only current, explicit SDK components.
+
+This is **not yet an inference proof**. llama.cpp is not linked, GGUF loading is not implemented, and no device generation benchmark exists.
 
 ## Toolchain baseline
 
@@ -29,6 +31,15 @@ Next native integration steps:
 3. Integrate via CMake and preserve upstream notices.
 4. Add explicit native model/session ownership, cancellation, token streaming, and error mapping.
 5. Add a model picker using Android document APIs and test with a separately supplied compatible GGUF.
+
+## Agent foundation
+
+The initial Kotlin agent foundation includes:
+- A strict task lifecycle state machine with terminal-state protection.
+- A capability/risk policy that denies missing grants and requires per-action approval for process execution, network, destructive, and publish actions.
+- Unit tests for valid transitions, repair paths, terminal states, and permission decisions.
+
+These components are policy primitives only. There is not yet a model-driven planner, tool registry, process manager, or executing agent.
 
 ## Validation required for M1 completion
 
