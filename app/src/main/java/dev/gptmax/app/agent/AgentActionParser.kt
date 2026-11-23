@@ -28,7 +28,7 @@ internal object AgentActionParser {
     private class JsonObjectReader(private val source: String) {
         private var index = 0
 
-        fun readObject(): Map<String, Any> {
+        fun readObject(requireEndAfter: Boolean = true): Map<String, Any> {
             skipWhitespace()
             expect('{')
             val result = linkedMapOf<String, Any>()
@@ -46,7 +46,7 @@ internal object AgentActionParser {
                 skipWhitespace()
                 val value: Any = when {
                     peek('"') -> readString()
-                    peek('{') -> readObject()
+                    peek('{') -> readObject(requireEndAfter = false)
                     else -> throw IllegalArgumentException("Only string values and nested objects are accepted.")
                 }
                 require(result.put(key, value) == null) { "Duplicate JSON key: $key" }
