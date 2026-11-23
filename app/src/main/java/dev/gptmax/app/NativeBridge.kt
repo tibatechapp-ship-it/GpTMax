@@ -1,8 +1,8 @@
 package dev.gptmax.app
 
 /**
- * Small JNI boundary. The real inference backend is added in M1 after the upstream
- * backend revision and native API have been pinned and reviewed.
+ * Narrow JNI boundary for the pinned llama.cpp backend.
+ * Model paths must point to app-private files prepared by the Android storage layer.
  */
 internal object NativeBridge {
     init {
@@ -11,4 +11,7 @@ internal object NativeBridge {
 
     external fun backendStatus(): String
     external fun nativeBuildInfo(): String
+    external fun nativeLoadModel(modelPath: String): String
+    external fun nativeUnloadModel()
+    external fun nativeShutdown()
 }
