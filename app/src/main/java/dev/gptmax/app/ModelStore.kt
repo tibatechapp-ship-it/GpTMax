@@ -25,7 +25,9 @@ internal object ModelStore {
             .filter { it.isFile && it.extension.equals("gguf", ignoreCase = true) }
             .mapNotNull { file ->
                 runCatching {
-                    val sha = sha256(file)
+                    val namedSha = file.nameWithoutExtension.lowercase()
+                        .takeIf { shaPattern.matches(it) }
+                    val sha = namedSha ?: sha256(file)
                     val metadata = readMetadata(directory, sha)
                     StoredModel(
                         displayName = metadata.getProperty("displayName") ?: file.name,
@@ -43,6 +45,16 @@ internal object ModelStore {
 
     fun findBySha256(directory: File, sha256: String): StoredModel? {
         require(shaPattern.matches(sha256)) { "Invalid model SHA-256." }
+        val contentAddressed = File(directory, "$sha256.gguf")
+        if (contentAddressed.isFile) {
+            return StoredModel(
+                displayName = readMetadata(directory, sha256).getProperty("displayName")
+                    ?: contentAddressed.name,
+                file = contentAddressed,
+                sizeBytes = contentAddressed.length(),
+                sha256 = sha256,
+            )
+        }
         return list(directory).firstOrNull { it.sha256 == sha256 }
     }
 
