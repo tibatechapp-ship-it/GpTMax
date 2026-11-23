@@ -6,6 +6,13 @@ import java.io.File
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import java.util.concurrent.atomic.AtomicBoolean
+import dev.gptmax.app.agent.AgentRunLimits
+import dev.gptmax.app.agent.AgentRuntime
+import dev.gptmax.app.agent.LocalLlamaAgentModel
+import dev.gptmax.app.agent.ToolRisk
+import dev.gptmax.app.agent.ToolExecutionStatus
+import dev.gptmax.app.agent.createDocumentTreeToolRegistry
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,6 +32,13 @@ internal data class InferenceUiState(
     val modelReady: Boolean = false,
     val storedModels: List<StoredModel> = emptyList(),
     val activeModelSha256: String? = null,
+    val workspaceTreeUri: String? = null,
+    val workspaceLabel: String = "No project folder selected",
+    val agentRequest: String = "Inspect this project, identify its architecture and highest-priority issues, and report evidence. Do not edit files.",
+    val agentOutput: String = "Select a project folder and load a GGUF model to start the coding agent.",
+    val agentToolLog: List<String> = emptyList(),
+    val agentRunning: Boolean = false,
+    val agentWriteEnabled: Boolean = false,
 )
 
 internal class GpTMaxViewModel(application: Application) : AndroidViewModel(application) {
@@ -32,8 +46,13 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
     val state: StateFlow<InferenceUiState> = mutableState.asStateFlow()
 
     private val sessionPreferences = application.getSharedPreferences("inference_session", Application.MODE_PRIVATE)
+    private var agentCancellation: AtomicBoolean? = null
 
     init {
+        val savedWorkspace = sessionPreferences.getString("workspace_tree_uri", null)
+        if (savedWorkspace != null) {
+            mutableState.update { it.copy(workspaceTreeUri = savedWorkspace, workspaceLabel = Uri.parse(savedWorkspace).lastPathSegment ?: "Selected project") }
+        }
         refreshRuntimeInfo()
         refreshModels()
     }
@@ -263,9 +282,91 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
         }
     }
 
+
+    fun updateAgentRequest(value: String) {
+        mutableState.update { it.copy(agentRequest = value) }
+    }
+
+    fun setAgentWriteEnabled(enabled: Boolean) {
+        mutableState.update { it.copy(agentWriteEnabled = enabled) }
+    }
+
+    fun selectWorkspace(uri: Uri) {
+        val label = uri.lastPathSegment?.substringAfterLast(':')?.takeIf { it.isNotBlank() } ?: "Selected project folder"
+        sessionPreferences.edit().putString("workspace_tree_uri", uri.toString()).apply()
+        mutableState.update {
+            it.copy(
+                workspaceTreeUri = uri.toString(),
+                workspaceLabel = label,
+                agentOutput = "Project folder selected. Load a GGUF model to begin.",
+            )
+        }
+    }
+
+    fun runAgent() {
+        val snapshot = mutableState.value
+        if (snapshot.agentRunning || snapshot.isBusy || snapshot.isGenerating) return
+        if (!snapshot.modelReady) {
+            mutableState.update { it.copy(agentOutput = "Load a GGUF model before starting the coding agent.") }
+            return
+        }
+        val treeUri = snapshot.workspaceTreeUri
+        if (treeUri == null) {
+            mutableState.update { it.copy(agentOutput = "Choose a project folder first.") }
+            return
+        }
+        if (snapshot.agentRequest.isBlank()) return
+
+        val cancellation = AtomicBoolean(false)
+        agentCancellation = cancellation
+        mutableState.update {
+            it.copy(agentRunning = true, agentOutput = "Agent is inspecting the selected project…", agentToolLog = emptyList())
+        }
+        viewModelScope.launch {
+            try {
+                val registry = createDocumentTreeToolRegistry(getApplication(), Uri.parse(treeUri))
+                val capabilities = buildSet {
+                    add(ToolRisk.READ_ONLY)
+                    if (snapshot.agentWriteEnabled) add(ToolRisk.WORKSPACE_WRITE)
+                }
+                val result = AgentRuntime(
+                    model = LocalLlamaAgentModel(maxOutputTokens = 384),
+                    registry = registry,
+                    limits = AgentRunLimits(maxToolCalls = 8, maxObservationChars = 6_000),
+                ).run(
+                    request = snapshot.agentRequest,
+                    grantedCapabilities = capabilities,
+                    cancellation = cancellation,
+                )
+                val log = result.toolResults.map { tool ->
+                    "${tool.toolName} · ${tool.status}\n${tool.output.take(2_500)}"
+                }
+                mutableState.update {
+                    it.copy(
+                        agentOutput = "${result.status}:\n${result.answer}",
+                        agentToolLog = log,
+                    )
+                }
+            } catch (error: Exception) {
+                mutableState.update {
+                    it.copy(agentOutput = "Agent failed: ${error.message ?: error.javaClass.simpleName}")
+                }
+            } finally {
+                agentCancellation = null
+                mutableState.update { it.copy(agentRunning = false) }
+            }
+        }
+    }
+
+    fun stopAgent() {
+        agentCancellation?.set(true)
+        NativeBridge.nativeCancelGeneration()
+        mutableState.update { it.copy(agentOutput = "Cancellation requested…") }
+    }
+
     fun generate() {
         val snapshot = mutableState.value
-        if (snapshot.isBusy || snapshot.isGenerating || !snapshot.modelReady || snapshot.prompt.isBlank()) return
+        if (snapshot.isBusy || snapshot.isGenerating || snapshot.agentRunning || !snapshot.modelReady || snapshot.prompt.isBlank()) return
         NativeBridge.nativeBeginGeneration()
         mutableState.update {
             it.copy(generatedText = "", isGenerating = true, nativeStatus = "Generating locally…")
@@ -308,6 +409,7 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
     override fun onCleared() {
         // Do not unload the process-scoped native model on Activity recreation.
         // Cancellation is non-blocking; process teardown owns final native cleanup.
+        agentCancellation?.set(true)
         NativeBridge.nativeCancelGeneration()
         super.onCleared()
     }
