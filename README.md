@@ -4,7 +4,7 @@
 
 GpTMax is being designed as an AI development environment inspired by modern agentic code editors: project explorer, code editor, integrated agent, controlled terminal/runtime, Git-aware changes, and build/test feedback—powered first by on-device GGUF inference on Android.
 
-> **Current implementation:** Android app scaffold, Jetpack Compose UI, C++17 JNI bridge, pinned llama.cpp source, SAF import into app-private storage with SHA-256 and GGUF magic validation, native model/context loading, prompt tokenization, prompt evaluation, sampling, token-to-text conversion, streaming callback, and cooperative cancellation. Android CI validates compilation and unit tests. Physical-device generation, memory/thermal profiling, editor, managed terminal, and coding-agent execution are not yet proven or complete.
+ > **Current implementation:** Android app with local GGUF inference foundation, a coding-agent UI, selected-project SAF access, bounded local-model tool loop, file list/read/search/write/exact-replace tools, explicit write permission, and an allowlisted managed-process foundation. CI and physical-device validation are tracked separately; this does not yet equal full Cursor feature parity.
 
 ## Product north star
 
@@ -33,6 +33,7 @@ Turn a natural-language engineering task into a **reviewable, validated change**
 - [Product vision](docs/product-vision.md)
 - [System architecture](docs/architecture.md)
 - [Agent and runtime design](docs/agent-runtime.md)
+- [Coding agent implementation and limitations](docs/agent-runtime.md)
 - [M1 implementation notes](docs/m1-implementation.md)
 - [M1 physical-device validation runbook](docs/m1-device-validation.md)
 - [Android device compatibility](docs/device-compatibility.md)
@@ -53,7 +54,7 @@ Install the Android SDK components listed in `.github/workflows/android-build.ym
 
 ## Inference and optimization
 
-M1 includes a native generation path that applies a model-embedded GGUF chat template when available, tokenizes the formatted prompt, evaluates it, samples tokens, streams decoded text to Compose, and accepts cancellation requests. The app includes a verified-import flow for the official Qwen2.5-0.5B-Instruct Q4_K_M smoke-test model; model weights remain external to the APK. Follow the [physical-device validation runbook](docs/m1-device-validation.md). The code must still be exercised with the model on physical devices. Model optimization and LookAtMyQuant-inspired quantization research remain a separate, measured track after a stable baseline exists. MLX-specific runtime code is not an Android backend and will not be transplanted directly.
+M1 includes a native generation path that applies a model-embedded GGUF chat template when available, tokenizes the formatted prompt, evaluates it, samples tokens, streams decoded text to Compose, and accepts cancellation requests. The app includes a verified-import flow for the official Qwen2.5-0.5B-Instruct Q4_K_M smoke-test model; model weights remain external to the APK. Follow the [physical-device validation runbook](docs/m1-device-validation.md). The code must still be exercised with the model on physical devices. The coding-agent layer now routes structured local-model actions through a bounded tool registry and supports scoped file operations in a user-selected SAF project folder; see the agent runtime document for limitations. Model optimization and LookAtMyQuant-inspired quantization research remain a separate, measured track after a stable baseline exists. MLX-specific runtime code is not an Android backend and will not be transplanted directly.
 
 ## Platform principles
 
