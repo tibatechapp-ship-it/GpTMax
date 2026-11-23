@@ -58,6 +58,7 @@ class MainActivity : ComponentActivity() {
                     onCancel = viewModel::cancelGeneration,
                     onRefresh = viewModel::refreshRuntimeInfo,
                     onDeleteModel = viewModel::deleteModel,
+                    onLoadModel = viewModel::loadStoredModel,
                     onUnloadModel = viewModel::unloadModel,
                 )
             }
@@ -75,6 +76,7 @@ private fun GpTMaxHome(
     onCancel: () -> Unit,
     onRefresh: () -> Unit,
     onDeleteModel: (String) -> Unit,
+    onLoadModel: (String) -> Unit,
     onUnloadModel: () -> Unit,
 ) {
     var pendingDeletion by remember { mutableStateOf<StoredModel?>(null) }
@@ -201,10 +203,19 @@ private fun GpTMaxHome(
                                         Text("Currently loaded", style = MaterialTheme.typography.labelSmall)
                                     }
                                 }
-                                Button(
-                                    onClick = { pendingDeletion = model },
-                                    enabled = !state.isBusy && !state.isGenerating,
-                                ) { Text("Delete") }
+                                Column {
+                                    TextButton(
+                                        onClick = { onLoadModel(model.sha256) },
+                                        enabled = !state.isBusy && !state.isGenerating &&
+                                            model.sha256 != state.activeModelSha256,
+                                    ) {
+                                        Text(if (model.sha256 == state.activeModelSha256) "Loaded" else "Load")
+                                    }
+                                    TextButton(
+                                        onClick = { pendingDeletion = model },
+                                        enabled = !state.isBusy && !state.isGenerating,
+                                    ) { Text("Delete") }
+                                }
                             }
                         }
                     }
