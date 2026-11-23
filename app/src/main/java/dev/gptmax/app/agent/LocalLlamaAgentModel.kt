@@ -24,15 +24,14 @@ class LocalLlamaAgentModel(
         val promptTokenLimit = contextTokens - maxOutputTokens - CONTEXT_SAFETY_MARGIN
         if (promptTokenLimit <= 0) throw IllegalStateException("The model context is too small for the requested output budget.")
 
-        var requestLimit = MAX_REQUEST_CHARS
-        var observationLimit = MAX_CONTEXT_CHARS
+        var fitLimits = PromptFitLimits(MAX_REQUEST_CHARS, MAX_CONTEXT_CHARS)
         var prompt = ""
         var promptTokens = -1
         var fitted = false
         var attempts = 0
         while (attempts < MAX_PROMPT_FIT_ATTEMPTS) {
             prompt = buildPrompt(
-                userRequest, observations, availableTools, step, requestLimit, observationLimit,
+                userRequest, observations, availableTools, step, fitLimits.requestChars, fitLimits.observationChars,
             )
             promptTokens = NativeBridge.nativePromptTokenCount(prompt)
             if (promptTokens in 1..promptTokenLimit) {
@@ -42,15 +41,7 @@ class LocalLlamaAgentModel(
             if (promptTokens < 0) {
                 throw IllegalStateException("Native tokenizer could not size the agent prompt.")
             }
-            if (observationLimit > 512) {
-                observationLimit /= 2
-            } else if (observationLimit > 0) {
-                observationLimit = 0
-            } else if (requestLimit > MIN_REQUEST_CHARS) {
-                requestLimit = (requestLimit / 2).coerceAtLeast(MIN_REQUEST_CHARS)
-            } else {
-                break
-            }
+            fitLimits = PromptContextFit.next(fitLimits) ?: break
             attempts++
         }
         if (!fitted) {
@@ -120,7 +111,6 @@ class LocalLlamaAgentModel(
         private const val MAX_RESPONSE_CHARS = 12_000
         private const val MAX_REQUEST_CHARS = 3_000
         private const val MAX_CONTEXT_CHARS = 5_000
-        private const val MIN_REQUEST_CHARS = 400
         private const val CONTEXT_SAFETY_MARGIN = 32
         private const val MAX_PROMPT_FIT_ATTEMPTS = 10
     }
