@@ -16,7 +16,7 @@ private fun isSensitiveFile(file: File): Boolean =
         file.name.endsWith(".p12", ignoreCase = true) ||
         file.name.endsWith(".key", ignoreCase = true)
 
-private fun safeWorkspaceFile(root: File, relativePath: String): File {
+internal fun safeWorkspaceFile(root: File, relativePath: String): File {
     require(relativePath.isNotBlank()) { "Path is required." }
     require(!relativePath.startsWith("/") && !relativePath.startsWith("\\")) {
         "Absolute paths are not allowed."
