@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
@@ -25,6 +26,7 @@ internal fun WorkspaceEditorPanel(treeUri: String?) {
     var entries by remember(treeUri) { mutableStateOf(emptyList<BrowserItem>()) }
     var selectedPath by remember(treeUri) { mutableStateOf<String?>(null) }
     var editorText by remember(treeUri) { mutableStateOf("") }
+    var originalText by remember(treeUri) { mutableStateOf("") }
     var dirty by remember(treeUri) { mutableStateOf(false) }
     var busy by remember(treeUri) { mutableStateOf(false) }
     var status by remember(treeUri) { mutableStateOf("Select a project folder to browse files.") }
@@ -107,7 +109,7 @@ internal fun WorkspaceEditorPanel(treeUri: String?) {
                                             value
                                         }
                                     }
-                                    result.onSuccess { editorText = it; selectedPath = entry.path; dirty = false; status = "Opened " + entry.path }
+                                    result.onSuccess { editorText = it; originalText = it; selectedPath = entry.path; dirty = false; status = "Opened " + entry.path }
                                         .onFailure { status = "Open failed: " + (it.message ?: it.javaClass.simpleName) }
                                     busy = false
                                 }
@@ -164,7 +166,7 @@ internal fun WorkspaceEditorPanel(treeUri: String?) {
                                         }
                                     }
                                 }
-                                result.onSuccess { dirty = false; status = "Saved " + filePath; refreshKey++ }
+                                result.onSuccess { originalText = snapshot; dirty = false; status = "Saved " + filePath; refreshKey++ }
                                     .onFailure { status = "Save failed: " + (it.message ?: it.javaClass.simpleName) }
                                 busy = false
                             }
@@ -172,12 +174,16 @@ internal fun WorkspaceEditorPanel(treeUri: String?) {
                         enabled = dirty && !busy,
                         modifier = Modifier.weight(1f)
                     ) { Text(if (busy) "Saving…" else "Save") }
-                    TextButton(onClick = { selectedPath = null; editorText = ""; dirty = false }, enabled = !busy) { Text("Close") }
+                    TextButton(onClick = { selectedPath = null; editorText = ""; originalText = ""; dirty = false }, enabled = !busy) { Text("Close") }
                 }
             }
 
+            if (dirty) {
+                Text("Review diff before saving", style = MaterialTheme.typography.titleSmall)
+                Text(buildEditorDiff(originalText, editorText), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                Text("Unsaved changes", color = MaterialTheme.colorScheme.error)
+            }
             Text(status, style = MaterialTheme.typography.bodySmall)
-            if (dirty) Text("Unsaved changes", color = MaterialTheme.colorScheme.error)
         }
     }
 
@@ -210,6 +216,7 @@ internal fun WorkspaceEditorPanel(treeUri: String?) {
                         result.onSuccess {
                             selectedPath = it
                             editorText = ""
+                            originalText = ""
                             dirty = false
                             status = "Created " + it
                             refreshKey++
