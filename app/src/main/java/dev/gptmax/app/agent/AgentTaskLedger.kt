@@ -37,7 +37,7 @@ class AgentTaskLedger(private val file: File) {
         )
         FileOutputStream(file, true).bufferedWriter(Charsets.UTF_8).use { writer ->
             writer.write(row.entries.joinToString(prefix = "{", postfix = "}") { (key, value) ->
-                "\"${escape(key)}\":${value?.let { "\" ${escape(it)} \"" .replace(" ", "") } ?: "null"}"
+                "\"${escape(key)}\":${value?.let { "\"" + escape(it) + "\"" } ?: "null"}"
             }
             writer.newLine()
         }
