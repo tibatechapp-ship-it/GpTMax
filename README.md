@@ -4,7 +4,7 @@
 
 GpTMax is being designed as an AI development environment inspired by modern agentic code editors: project explorer, code editor, integrated agent, controlled terminal/runtime, Git-aware changes, and build/test feedback—powered first by on-device GGUF inference on Android ARM64.
 
-> **Status:** architecture and repository-governance phase. No Android application, coding agent, terminal runtime, native inference backend, APK, or benchmark has been implemented or released yet. Roadmap items are plans, not shipped capabilities.
+> **Current implementation:** Android Gradle app scaffold, Jetpack Compose foundation screen, C++17 JNI shared library, pinned toolchain configuration, and Android CI build/test workflow are now in the repository. The JNI bridge currently reports status only. llama.cpp is not linked; GGUF loading, local generation, editor, terminal/process runtime, and autonomous coding are not implemented yet. M1 inference proof remains incomplete.
 
 ## Product north star
 
@@ -33,10 +33,21 @@ Turn a natural-language engineering task into a **reviewable, validated change**
 - [Product vision](docs/product-vision.md)
 - [System architecture](docs/architecture.md)
 - [Agent and runtime design](docs/agent-runtime.md)
+- [M1 implementation notes](docs/m1-implementation.md)
 - [Roadmap](ROADMAP.md)
 - [Architecture decision records](docs/decision-records/)
 - [Quality gates](docs/quality-gates.md)
 - [Threat model](docs/threat-model.md)
+
+## Build locally
+
+The current project uses JDK 17 and Gradle 8.9, with Android SDK 35, NDK 27.0.12077973, and CMake 3.22.1.
+
+```bash
+gradle --no-daemon assembleDebug testDebugUnitTest
+```
+
+Install the Android SDK components listed in `.github/workflows/android-build.yml` before building locally. A Gradle wrapper will be checked in once its wrapper JAR is generated and validated; do not rely on a globally installed Gradle for a future release.
 
 ## Inference and optimization
 
@@ -62,7 +73,7 @@ The first technical proof remains Android ARM64 inference: build a pinned llama.
 - [Quality gates](docs/quality-gates.md)
 - [Support](SUPPORT.md)
 
-Repository CI checks documentation and repository hygiene. It does not prove Android builds, inference, agent behavior, or device performance.
+Repository CI checks documentation and repository hygiene. Android CI assembles the debug app and runs unit tests; neither workflow proves local inference, agent behavior, or device performance.
 
 ## License
 

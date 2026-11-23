@@ -8,28 +8,29 @@ This roadmap defines the product sequence for GpTMax as a **local-first AI codin
 - [x] Add engineering governance, threat model, and quality checks
 - [x] Establish repository CI
 - [x] Define AI coding studio product direction and component boundaries
-- [ ] Record toolchain versions when the Android project is introduced
-- [ ] Establish baseline issue/task tracking and release criteria
+- [x] Record initial Android/Gradle/Kotlin/NDK/CMake toolchain versions
+- [x] Establish a baseline task state model and tool permission policy
+- [ ] Establish release criteria and issue/task tracking labels
 
 ## M1 — Android ARM64 inference proof
 
 **Exit condition:** a reproducible native build and successful local generation on a real Android ARM64 device.
 
 - [ ] Pin llama.cpp to an immutable upstream revision; record license and provenance
-- [ ] Pin Android Gradle Plugin, Gradle wrapper, Kotlin, NDK, CMake, and SDK configuration
-- [ ] Create minimal Kotlin/Compose application and small JNI API
+- [x] Pin Android Gradle Plugin, Gradle, Kotlin, NDK, CMake, and SDK configuration
+- [x] Create minimal Kotlin/Compose application and small JNI API
 - [ ] Implement native adapter behind the GpTMax Inference API
 - [ ] Select/load a compatible GGUF using Android document APIs
 - [ ] Generate and stream tokens; support cancellation and unload
 - [ ] Handle errors, lifecycle, and memory pressure deterministically
-- [ ] Add native/unit tests and a build workflow
+- [x] Add unit-test wiring and Android build workflow
 - [ ] Run a documented device smoke test and record model checksum, context, RAM, latency, and tokens/sec
 
 ## M2 — GpTMax Code Studio foundation
 
 **Exit condition:** user can open a project, browse/edit files, and inspect changes without an agent.
 
-- [ ] Android project shell and adaptive navigation
+- [x] Android application shell and Compose foundation screen
 - [ ] Project explorer and safe document-provider integration
 - [ ] Editor integration with syntax highlighting and multi-tab state
 - [ ] File search and basic project-wide search
@@ -41,7 +42,8 @@ This roadmap defines the product sequence for GpTMax as a **local-first AI codin
 
 **Exit condition:** one agent completes a bounded repository task using registered tools and produces an auditable result.
 
-- [ ] Task state machine and structured task plan
+- [x] Task state machine foundation
+- [x] Initial risk/capability permission policy
 - [ ] Context builder with explicit token/budget limits
 - [ ] Tool registry with schemas, permission levels, and result envelopes
 - [ ] File read/search and patch-based write tools
