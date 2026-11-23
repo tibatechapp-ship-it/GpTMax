@@ -58,7 +58,7 @@ internal fun WorkspaceEditorPanel(treeUri:String?) {
     TextButton(onClick={path=""},enabled=path.isNotBlank()&&!busy){Text("Root")}
    }
    LazyColumn(Modifier.fillMaxWidth().heightIn(max=220.dp)){
-    items(items,key{it.path}){item->
+    items(items, key = { it.path }){item->
      TextButton(onClick={
       if(item.dir)path=item.path
       else if(!dirty)scope.launch{
@@ -78,7 +78,7 @@ internal fun WorkspaceEditorPanel(treeUri:String?) {
         .onFailure{status="Open failed: "+(it.message?:it.javaClass.simpleName)}
        busy=false
       }else status="Save or close edits before opening another file."
-     },Modifier.fillMaxWidth()){Text((if(item.dir)"▸ " else "  ")+item.name+(if(item.dir)"/" else " · "+item.size+" B"))}
+     },modifier=Modifier.fillMaxWidth()){Text((if(item.dir)"▸ " else "  ")+item.name+(if(item.dir)"/" else " · "+item.size+" B"))}
     }
    }
    filePath?.let{f->
