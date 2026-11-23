@@ -174,12 +174,12 @@ private fun GpTMaxHome(
                     )
                     Button(
                         onClick = onDownloadTestModel,
-                        enabled = !state.isBusy && !state.isGenerating,
+                        enabled = !state.isBusy && !state.isGenerating && !state.agentRunning,
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Download test model") }
                     Button(
                         onClick = onPickVerifiedTestModel,
-                        enabled = !state.isBusy && !state.isGenerating,
+                        enabled = !state.isBusy && !state.isGenerating && !state.agentRunning,
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Import and verify downloaded Qwen GGUF") }
                 }
@@ -341,7 +341,7 @@ private fun GpTMaxHome(
                                 Column {
                                     TextButton(
                                         onClick = { onLoadModel(model.sha256) },
-                                        enabled = !state.isBusy && !state.isGenerating &&
+                                        enabled = !state.isBusy && !state.isGenerating && !state.agentRunning &&
                                             model.sha256 != state.activeModelSha256,
                                     ) {
                                         Text(if (model.sha256 == state.activeModelSha256) "Loaded" else "Load")
