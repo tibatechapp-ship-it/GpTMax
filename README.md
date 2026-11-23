@@ -1,44 +1,57 @@
 # GpTMax
 
-**Android-native local AI inference and model-optimization platform.**
+**Local-first AI coding studio and Android-native inference platform.**
 
-GpTMax is an engineering project to bring efficient large-language-model inference to Android devices, with a long-term goal of adapting selected quantization techniques from [LookAtMyQuant](https://github.com/ShinMegamiBoson/lookatmyquant) for mobile hardware.
+GpTMax is being designed as an AI development environment inspired by modern agentic code editors: project explorer, code editor, integrated agent, controlled terminal/runtime, Git-aware changes, and build/test feedback—powered first by on-device GGUF inference on Android ARM64.
 
-> Status: repository bootstrap / architecture phase. No Android runtime, quantizer, APK, or benchmark is currently released. Do not treat planned capabilities as implemented.
+> **Status:** architecture and repository-governance phase. No Android application, coding agent, terminal runtime, native inference backend, APK, or benchmark has been implemented or released yet. Roadmap items are plans, not shipped capabilities.
 
-## Project goals
+## Product north star
 
-- Run compatible local GGUF models on Android ARM64.
-- Provide a reliable native inference layer through C++ and JNI.
-- Manage model files safely: checksums, storage, cancellation, and resumable downloads where supported.
-- Evaluate mobile-friendly quantization and model-quality trade-offs.
-- Measure latency, memory use, thermal behavior, and energy consumption on real devices.
-- Keep inference local by default; network access should be limited to user-requested model downloads or explicitly configured services.
+Turn a natural-language engineering task into a **reviewable, validated change**:
 
-## Planned architecture
+1. Understand the request and inspect the repository.
+2. Build a relevant, permission-aware context.
+3. Plan a sequence of small, observable actions.
+4. Read and edit files inside a task workspace.
+5. Run approved tools, builds, and tests where the environment supports them.
+6. Diagnose failures and attempt bounded repairs.
+7. Review the resulting diff and validation evidence.
+8. Present the result for user approval; never silently publish or merge.
 
-- **Android app:** Kotlin, Jetpack Compose, Android lifecycle and storage APIs.
-- **Native layer:** C++ with Android NDK, CMake, and JNI.
-- **Inference backend:** llama.cpp / GGUF, subject to pinned upstream versions and license review.
-- **Optimization research:** a separately testable quantization component; MLX-specific code is not an Android runtime and will not be transplanted directly.
+## Product pillars
 
-See [Architecture](docs/architecture.md), [Roadmap](ROADMAP.md), and the [Architecture Decision Records](docs/decision-records/).
+- **AI Code Studio:** editor, project explorer, search, tabs, diff, Git changes, and an agent workspace designed for Android.
+- **Agent Core:** task planner, context builder, tool router, execution controller, failure analyzer, reviewer, and task ledger.
+- **Local Inference:** GGUF model loading through a pinned native backend, initially llama.cpp, behind a stable GpTMax inference interface.
+- **Integrated Runtime:** an application-owned terminal/process and tool layer. Termux is not a product dependency. Runtime capabilities must be verified on Android; unsupported or resource-heavy builds may use an optional, explicitly configured build worker.
+- **Code Intelligence:** ignore-aware file inventory, symbol-aware retrieval, semantic search, dependency relationships, and project decisions.
+- **Trust and evidence:** scoped permissions, task snapshots, cancellation, resource limits, visible diffs, and honest test status.
 
-## Device requirements
+## Architecture and plan
 
-The initial target is Android ARM64. Supported Android versions, RAM requirements, GPU backends, and model-size recommendations will be documented only after builds and device tests establish them. Model file size is not equal to runtime RAM usage; KV cache and runtime buffers add overhead.
+- [Product vision](docs/product-vision.md)
+- [System architecture](docs/architecture.md)
+- [Agent and runtime design](docs/agent-runtime.md)
+- [Roadmap](ROADMAP.md)
+- [Architecture decision records](docs/decision-records/)
+- [Quality gates](docs/quality-gates.md)
+- [Threat model](docs/threat-model.md)
 
-## Safety and privacy
+## Inference and optimization
 
-- Never execute downloaded model files as code.
-- Verify model metadata and integrity where checksums are available.
-- Show model source, license, size, and required storage before download when known.
-- Do not upload prompts or model contents without explicit user configuration and consent.
-- Treat third-party model weights and repository code as separately licensed assets.
+The first technical proof remains Android ARM64 inference: build a pinned llama.cpp backend, load a user-selected compatible GGUF model, and generate locally on a real device. Model optimization and LookAtMyQuant-inspired quantization research remain a separate, measured track after a stable baseline exists. MLX-specific runtime code is not an Android backend and will not be transplanted directly.
 
-## Development status
+## Platform principles
 
-This repository is being initialized. The first milestone is a reproducible Android ARM64 build of the inference backend and a minimal local prompt-generation test. Quantization-on-device is a later research milestone, not a prerequisite for the first runtime.
+- Kotlin / Jetpack Compose for Android UI and lifecycle.
+- C++ / Android NDK / CMake for native inference.
+- A small JNI boundary and a stable internal inference API.
+- SAF/document-provider access for user-selected projects and model files.
+- App-private workspace by default; explicit permission for broader access.
+- No model weights committed to this repository.
+- No arbitrary unrestricted shell execution by the model.
+- No claim of GPU support, supported-device coverage, or performance until verified.
 
 ## Engineering governance
 
@@ -49,12 +62,8 @@ This repository is being initialized. The first milestone is a reproducible Andr
 - [Quality gates](docs/quality-gates.md)
 - [Support](SUPPORT.md)
 
-The repository quality workflow checks required documentation and basic repository hygiene. It does not replace Android builds, native tests, security review, or device validation.
-
-## Contributing
-
-Please open an issue before major architectural changes. Include device model, Android version, ABI, backend, model identifier, and reproducible steps for performance or correctness reports. Never include private prompts, tokens, or personal data in issue reports.
+Repository CI checks documentation and repository hygiene. It does not prove Android builds, inference, agent behavior, or device performance.
 
 ## License
 
-GpTMax project materials are licensed under the MIT License unless a file or third-party component states otherwise. Third-party dependencies and model weights retain their own licenses. See [LICENSE](LICENSE).
+GpTMax project materials are licensed under the MIT License unless a file or third-party component states otherwise. Third-party code, model weights, tokenizer assets, and datasets retain their own licenses. See [LICENSE](LICENSE).
