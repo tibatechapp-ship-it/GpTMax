@@ -337,6 +337,12 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
                     request = snapshot.agentRequest,
                     grantedCapabilities = capabilities,
                     cancellation = cancellation,
+                    onToolResult = { tool ->
+                        val entry = tool.toolName + " · " + tool.status + "\n" + tool.output.take(2_500)
+                        mutableState.update { current ->
+                            current.copy(agentToolLog = (current.agentToolLog + entry).takeLast(12))
+                        }
+                    },
                 )
                 val log = result.toolResults.map { tool ->
                     "${tool.toolName} · ${tool.status}\n${tool.output.take(2_500)}"
