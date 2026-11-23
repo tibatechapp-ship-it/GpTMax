@@ -81,4 +81,28 @@ class WorkspaceToolsTest {
             root.deleteRecursively()
         }
     }
+    @Test
+    fun overviewDetectsStackAndTestsWithoutReadingSecrets() = runBlocking {
+        val root = Files.createTempDirectory("gptmax-overview").toFile()
+        try {
+            File(root, "src/main").mkdirs()
+            File(root, "tests").mkdirs()
+            File(root, "pyproject.toml").writeText("[project]\\nname='fixture'\\n")
+            File(root, "src/main/App.kt").writeText("class App")
+            File(root, "tests/test_app.py").writeText("def test_app(): pass")
+            File(root, ".env").writeText("API_KEY=must-not-appear")
+            val result = WorkspaceOverviewTool(root).execute(
+                AgentToolCall("overview-1", "workspace.overview", emptyMap()),
+                AtomicBoolean(false),
+            )
+            assertEquals(ToolExecutionStatus.SUCCESS, result.status)
+            assertTrue(result.output.contains("Python"))
+            assertTrue(result.output.contains("src/main/App.kt"))
+            assertTrue(result.output.contains("tests/test_app.py"))
+            assertTrue(!result.output.contains("must-not-appear"))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
 }

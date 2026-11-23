@@ -160,6 +160,7 @@ class WorkspaceWriteTool(private val root: File) : AgentTool {
 
 fun createWorkspaceToolRegistry(root: File): AgentToolRegistry = AgentToolRegistry(
     listOf(
+        WorkspaceOverviewTool(root),
         WorkspaceListTool(root),
         WorkspaceReadTool(root),
         WorkspaceSearchTool(root),
