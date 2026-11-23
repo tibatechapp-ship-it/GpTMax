@@ -95,8 +95,21 @@ internal fun WorkspaceEditorPanel(treeUri:String?) {
        parts.dropLast(1).forEach{parent=parent.findFile(it)?:error("Parent missing")}
        val target=parent.findFile(parts.last())?:error("File removed")
        require(target.isFile)
-       val output=ctx.contentResolver.openOutputStream(target.uri,"wt")?:error("Cannot write")
-       output.use{it.write(text.toByteArray(Charsets.UTF_8))}
+       val tempName=parts.last()+".gptmax-editor-tmp-"+System.nanoTime()
+       val temp=parent.createFile("text/plain",tempName)?:error("Cannot create temporary save file")
+       try {
+        val output=ctx.contentResolver.openOutputStream(temp.uri,"wt")?:error("Cannot write temporary file")
+        output.use{it.write(text.toByteArray(Charsets.UTF_8))}
+        val backupName=parts.last()+".gptmax-editor-backup-"+System.nanoTime()
+        val backup=if(target.renameTo(backupName)) target else null
+        if(!temp.renameTo(parts.last())){
+         backup?.renameTo(parts.last())
+         error("Document provider could not finalize atomic save")
+        }
+        backup?.delete()
+       } finally {
+        if(temp.exists())temp.delete()
+       }
       }}
       res.onSuccess{dirty=false;status="Saved "+f}
        .onFailure{status="Save failed: "+(it.message?:it.javaClass.simpleName)}
