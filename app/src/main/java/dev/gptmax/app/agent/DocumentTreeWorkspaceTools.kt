@@ -256,7 +256,8 @@ class DocumentTreeReplaceTool(context: Context, treeUri: Uri) : AgentTool {
         }
         val file = resolveDocument(root, call.arguments.getValue("path"))
         val content = readDocument(appContext, file, 128 * 1024)
-        val occurrences = content.windowed(oldText.length, 1, partialWindows = false).count { it == oldText }
+        val first = content.indexOf(oldText)
+        val occurrences = if (first < 0) 0 else if (content.indexOf(oldText, first + oldText.length) < 0) 1 else 2
         require(occurrences == 1) {
             if (occurrences == 0) "Exact old_text was not found; re-read the file before editing."
             else "old_text is ambiguous ($occurrences occurrences); provide a larger unique fragment."
