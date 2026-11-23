@@ -49,6 +49,11 @@ jobs:
             tests/native/unicode_conversion_test.cpp \
             -o /tmp/gptmax-unicode-tests
           /tmp/gptmax-unicode-tests
+          c++ -std=c++17 -Wall -Wextra -Werror -pedantic \
+            -I app/src/main/cpp \
+            tests/native/generation_budget_test.cpp \
+            -o /tmp/gptmax-generation-budget-tests
+          /tmp/gptmax-generation-budget-tests
 
       - name: Build debug APK and run unit tests
         run: gradle --no-daemon assembleDebug testDebugUnitTest
