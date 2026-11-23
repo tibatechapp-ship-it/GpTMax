@@ -7,8 +7,8 @@ Roadmap items are planned until implementation and tests are merged.
 - [x] Create public repository and document scope
 - [x] Define architecture and staged milestones
 - [x] Add privacy, security, and licensing guidance
-- [ ] Establish CI and repository quality gates
-- [ ] Pin toolchain and dependency versions
+- [x] Establish CI and repository quality gates
+- [ ] Pin Android/Gradle/NDK toolchain when the app module is introduced; pin research and runtime dependencies before use
 
 ## M1 — Android ARM64 inference proof
 

@@ -22,7 +22,7 @@ GpTMax is an engineering project to bring efficient large-language-model inferen
 - **Inference backend:** llama.cpp / GGUF, subject to pinned upstream versions and license review.
 - **Optimization research:** a separately testable quantization component; MLX-specific code is not an Android runtime and will not be transplanted directly.
 
-See [Architecture](docs/architecture.md) and [Roadmap](ROADMAP.md).
+See [Architecture](docs/architecture.md), [Roadmap](ROADMAP.md), and the [Architecture Decision Records](docs/decision-records/).
 
 ## Device requirements
 
@@ -39,6 +39,17 @@ The initial target is Android ARM64. Supported Android versions, RAM requirement
 ## Development status
 
 This repository is being initialized. The first milestone is a reproducible Android ARM64 build of the inference backend and a minimal local prompt-generation test. Quantization-on-device is a later research milestone, not a prerequisite for the first runtime.
+
+## Engineering governance
+
+- [Contributing guide](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Dependency and supply-chain policy](DEPENDENCY_POLICY.md)
+- [Threat model](docs/threat-model.md)
+- [Quality gates](docs/quality-gates.md)
+- [Support](SUPPORT.md)
+
+The repository quality workflow checks required documentation and basic repository hygiene. It does not replace Android builds, native tests, security review, or device validation.
 
 ## Contributing
 
