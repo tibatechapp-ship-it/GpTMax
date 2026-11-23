@@ -58,7 +58,7 @@ Java_dev_gptmax_app_NativeBridge_nativeLoadModel(JNIEnv * env, jobject, jstring 
     }
 
     auto model_params = llama_model_default_params();
-    model_params.use_mmap = true;
+    model_params.load_mode = LLAMA_LOAD_MODE_MMAP;
     g_model = llama_model_load_from_file(path.c_str(), model_params);
     if (g_model == nullptr) {
         return to_java_string(env, "llama.cpp could not load this GGUF model.");
