@@ -114,6 +114,9 @@ class AgentRuntime(
             val action = try {
                 model.nextAction(request, observations.toList(), registry.allSpecs(), calls)
             } catch (error: Exception) {
+                if (cancellation.get()) {
+                    return AgentRunResult(AgentRunStatus.CANCELLED, "Task cancelled.", results, calls)
+                }
                 return AgentRunResult(
                     AgentRunStatus.MODEL_ERROR,
                     "Model action failed: ${error.message ?: error.javaClass.simpleName}",
