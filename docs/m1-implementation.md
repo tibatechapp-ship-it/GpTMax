@@ -49,3 +49,11 @@ A successful CI build proves compilation and packaging only. It does not prove t
 ## Required M1 completion evidence
 
 Record device model, Android version, ABI, backend commit, model architecture/quantization, file size and SHA-256, context configuration, memory before/after/peak, model load latency, time to first token, tokens/second, thermal state, and an actual generated sample. Verify cancellation, unload, repeated load/unload, and low-memory failure handling before declaring M1 complete.
+
+
+## Runtime readiness and UI direction hardening
+
+- Native model readiness is parsed conservatively. Negative status messages such as `no model loaded` cannot satisfy the positive readiness condition.
+- Unit tests cover unloaded, loaded, partial, unavailable, and case-insensitive native status strings.
+- The current English interface is explicitly rendered left-to-right regardless of the Android system language; temperature values use locale-stable decimal formatting.
+- The Generate action remains disabled unless the native runtime confirms a loaded GGUF model and ready inference context.
