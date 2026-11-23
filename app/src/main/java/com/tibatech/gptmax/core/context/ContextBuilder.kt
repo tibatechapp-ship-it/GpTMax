@@ -23,7 +23,7 @@ class ContextBuilder(private val workspace: WorkspaceRepository) {
         return lines.joinToString("\n").ifBlank { "(empty workspace — open a folder in Settings)" }
     }
 
-    /** Contents of the files a plan touches, each truncated to [maxChars]. */
+    /** Contents of the files a plan touches, each truncated to maxChars. */
     suspend fun digest(paths: List<String>, maxChars: Int = 4_000): String =
         paths.take(8).joinToString("\n\n") { path ->
             val content = workspace.read(path)
