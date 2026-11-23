@@ -34,6 +34,7 @@ Turn a natural-language engineering task into a **reviewable, validated change**
 - [System architecture](docs/architecture.md)
 - [Agent and runtime design](docs/agent-runtime.md)
 - [M1 implementation notes](docs/m1-implementation.md)
+- [M1 physical-device validation runbook](docs/m1-device-validation.md)
 - [Roadmap](ROADMAP.md)
 - [Architecture decision records](docs/decision-records/)
 - [Quality gates](docs/quality-gates.md)
@@ -51,7 +52,7 @@ Install the Android SDK components listed in `.github/workflows/android-build.ym
 
 ## Inference and optimization
 
-M1 now includes an implemented native generation path: tokenize a prompt, evaluate it, sample tokens, stream decoded text to Compose, and accept cancellation requests. This code must still pass Android CI and be exercised with a compatible GGUF on a physical ARM64 device. Model optimization and LookAtMyQuant-inspired quantization research remain a separate, measured track after a stable baseline exists. MLX-specific runtime code is not an Android backend and will not be transplanted directly.
+M1 includes a native generation path that applies a model-embedded GGUF chat template when available, tokenizes the formatted prompt, evaluates it, samples tokens, streams decoded text to Compose, and accepts cancellation requests. The app includes a verified-import flow for the official Qwen2.5-0.5B-Instruct Q4_K_M smoke-test model; model weights remain external to the APK. Follow the [physical-device validation runbook](docs/m1-device-validation.md). The code must still be exercised with the model on a physical ARM64 device. Model optimization and LookAtMyQuant-inspired quantization research remain a separate, measured track after a stable baseline exists. MLX-specific runtime code is not an Android backend and will not be transplanted directly.
 
 ## Platform principles
 
