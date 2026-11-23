@@ -99,6 +99,7 @@ class AgentRuntime(
         approvedCallIds: Set<String> = emptySet(),
         cancellation: AtomicBoolean = AtomicBoolean(false),
         approvalRequest: suspend (AgentToolCall, AgentToolSpec) -> Boolean = { _, _ -> false },
+        onToolResult: suspend (AgentToolResult) -> Unit = {},
     ): AgentRunResult {
         require(request.isNotBlank()) { "Task request must not be blank." }
         val observations = mutableListOf<AgentObservation>()
@@ -167,6 +168,7 @@ class AgentRuntime(
                         }
                     }
                     results += result
+                    runCatching { onToolResult(result) }
                     val safeOutput = result.output.take(limits.maxObservationChars)
                     observations += AgentObservation(
                         role = "tool",
