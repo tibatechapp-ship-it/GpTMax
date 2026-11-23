@@ -17,7 +17,7 @@
 - CI compiles and runs native Unicode regression tests covering Arabic, mixed Arabic/English, supplementary-plane emoji, isolated UTF-16 surrogates, overlong UTF-8, UTF-8 encoded surrogates, and out-of-range code points.
 - The UI exposes a prompt, temperature control, generated output, and a stop action.
 - Imported models are stored by SHA-256 content identity with a private metadata sidecar; identical imports reuse the existing file instead of consuming additional storage.
-- The model registry lists stored GGUF files, cleans incomplete partial files, handles malformed metadata without hiding valid model files, and supports explicit deletion after an in-app confirmation. Deleting the currently loaded model unloads the native runtime first.
+- The model registry lists stored GGUF files, cleans incomplete partial files, handles malformed metadata without hiding valid model files, and supports reloading stored models and explicit deletion after an in-app confirmation. Deleting the currently loaded model unloads the native runtime first.
 - Generation cancellation is signaled atomically and wired to llama.cpp's abort callback. Model unload/shutdown signals cancellation before waiting for the native operation lock, preventing context destruction during active generation.
 
 ## Toolchain baseline
