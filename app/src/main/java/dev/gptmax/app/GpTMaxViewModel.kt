@@ -30,6 +30,8 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
     private val mutableState = MutableStateFlow(InferenceUiState())
     val state: StateFlow<InferenceUiState> = mutableState.asStateFlow()
 
+    private val sessionPreferences = application.getSharedPreferences("inference_session", Application.MODE_PRIVATE)
+
     init {
         refreshRuntimeInfo()
         refreshModels()
@@ -53,15 +55,20 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
                 runCatching { NativeBridge.backendStatus() }
                     .getOrElse { "Native backend unavailable: ${it.message ?: "unknown error"}" }
             }
+            val ready = status.contains("model loaded", ignoreCase = true) ||
+                status.contains("inference context ready", ignoreCase = true)
+            val activeSha = if (ready) {
+                sessionPreferences.getString("active_model_sha256", null)
+            } else {
+                sessionPreferences.edit().remove("active_model_sha256").apply()
+                null
+            }
             mutableState.update { current ->
                 current.copy(
                     buildInfo = info,
                     nativeStatus = status,
-                    // The JNI backend is process-scoped. Reconcile UI readiness from its
-                    // authoritative status rather than assuming a newly composed screen
-                    // means that the native model was unloaded.
-                    modelReady = status.contains("model loaded", ignoreCase = true) ||
-                        status.contains("inference context ready", ignoreCase = true),
+                    modelReady = ready,
+                    activeModelSha256 = activeSha,
                 )
             }
         }
@@ -97,6 +104,11 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
                 val ready = result == "MODEL_READY"
                 val storedModels = withContext(Dispatchers.IO) {
                     ModelStore.list(File(getApplication<Application>().filesDir, "models"))
+                }
+                if (ready) {
+                    sessionPreferences.edit().putString("active_model_sha256", imported.sha256).apply()
+                } else {
+                    sessionPreferences.edit().remove("active_model_sha256").apply()
                 }
                 mutableState.update {
                     it.copy(
@@ -134,6 +146,12 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
     fun deleteModel(sha256: String) {
         val snapshot = mutableState.value
         if (snapshot.isBusy || snapshot.isGenerating) return
+        if (snapshot.modelReady && snapshot.activeModelSha256 == null) {
+            mutableState.update {
+                it.copy(nativeStatus = "Loaded model identity is unknown. Unload the runtime before deleting stored files.")
+            }
+            return
+        }
         viewModelScope.launch {
             mutableState.update { it.copy(isBusy = true, nativeStatus = "Removing stored model…") }
             try {
@@ -143,6 +161,9 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
                         NativeBridge.nativeUnloadModel()
                     }
                     ModelStore.delete(directory, sha256)
+                }
+                if (snapshot.activeModelSha256 == sha256) {
+                    sessionPreferences.edit().remove("active_model_sha256").apply()
                 }
                 mutableState.update { current ->
                     current.copy(
@@ -156,6 +177,31 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
             } catch (error: Exception) {
                 mutableState.update {
                     it.copy(nativeStatus = "Could not delete model: ${error.message ?: error.javaClass.simpleName}")
+                }
+            } finally {
+                mutableState.update { it.copy(isBusy = false) }
+            }
+        }
+    }
+
+    fun unloadModel() {
+        val snapshot = mutableState.value
+        if (snapshot.isBusy || snapshot.isGenerating || !snapshot.modelReady) return
+        viewModelScope.launch {
+            mutableState.update { it.copy(isBusy = true, nativeStatus = "Unloading native model…") }
+            try {
+                withContext(Dispatchers.IO) { NativeBridge.nativeUnloadModel() }
+                sessionPreferences.edit().remove("active_model_sha256").apply()
+                mutableState.update {
+                    it.copy(
+                        modelReady = false,
+                        activeModelSha256 = null,
+                        nativeStatus = "Model unloaded; stored file retained.",
+                    )
+                }
+            } catch (error: Exception) {
+                mutableState.update {
+                    it.copy(nativeStatus = "Model unload failed: ${error.message ?: error.javaClass.simpleName}")
                 }
             } finally {
                 mutableState.update { it.copy(isBusy = false) }
