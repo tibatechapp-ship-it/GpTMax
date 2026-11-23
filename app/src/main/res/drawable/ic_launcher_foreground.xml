@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- GpTMax launcher glyph: a terminal prompt ">" with a code cursor block. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- prompt chevron -->
+    <path
+        android:fillColor="#7AA7E8"
+        android:pathData="M30,34 L44,52 L30,70 L38,70 L52,52 L38,34 Z" />
+    <!-- cursor block -->
+    <path
+        android:fillColor="#E6EEFA"
+        android:pathData="M58,60 h18 v10 h-18 Z" />
+    <!-- subtle underline -->
+    <path
+        android:fillColor="#4A7AC7"
+        android:pathData="M30,80 h46 v4 h-46 Z" />
+</vector>

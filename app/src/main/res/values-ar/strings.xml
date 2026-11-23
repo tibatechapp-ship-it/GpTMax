@@ -1,0 +1,22 @@
+<resources>
+    <string name="app_name">GpTMax</string>
+
+    <string name="tab_chat">محادثة</string>
+    <string name="tab_agent">الوكيل</string>
+    <string name="tab_editor">محرر</string>
+    <string name="tab_models">النماذج</string>
+    <string name="tab_settings">الإعدادات</string>
+
+    <string name="send">إرسال</string>
+    <string name="stop">إيقاف</string>
+    <string name="approve">موافقة</string>
+    <string name="reject">رفض</string>
+    <string name="download">تنزيل</string>
+    <string name="save">حفظ</string>
+    <string name="cancel">إلغاء</string>
+
+    <string name="agent_goal_hint">صف مهمة برمجية…</string>
+    <string name="approval_required">مطلوب موافقتك</string>
+    <string name="workspace_none">لم يتم اختيار مساحة عمل. افتح الإعدادات وامنح التطبيق الوصول إلى مجلد مشروع.</string>
+    <string name="engine_not_loaded">المحرك المحلي غير محمّل — اختر نموذج GGUF من تبويب النماذج.</string>
+</resources>
