@@ -95,13 +95,16 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
                     NativeBridge.nativeLoadModel(imported.file.absolutePath)
                 }
                 val ready = result == "MODEL_READY"
+                val storedModels = withContext(Dispatchers.IO) {
+                    ModelStore.list(File(getApplication<Application>().filesDir, "models"))
+                }
                 mutableState.update {
                     it.copy(
                         modelReady = ready,
                         activeModelSha256 = if (ready) imported.sha256 else null,
                         nativeStatus = if (ready) "GGUF loaded; inference context ready."
                             else "Model load failed: $result",
-                        storedModels = ModelStore.list(File(getApplication<Application>().filesDir, "models")),
+                        storedModels = storedModels,
                     )
                 }
             } catch (error: Exception) {
