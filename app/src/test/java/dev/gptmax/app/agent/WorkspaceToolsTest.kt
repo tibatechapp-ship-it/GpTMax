@@ -105,4 +105,37 @@ class WorkspaceToolsTest {
         }
     }
 
+    @Test
+    fun gitWorkspaceReportsTrackedChanges() = runBlocking {
+        val root = Files.createTempDirectory("gptmax-git").toFile()
+        try {
+            fun git(vararg args: String) {
+                val p = ProcessBuilder(listOf("git") + args).directory(root).redirectErrorStream(true).start()
+                val output = p.inputStream.bufferedReader().readText()
+                assertEquals(output, 0, p.waitFor())
+            }
+            git("init")
+            git("config", "user.email", "agent-test@example.invalid")
+            git("config", "user.name", "GpTMax test")
+            File(root, "tracked.txt").writeText("before\\n")
+            git("add", "tracked.txt")
+            git("commit", "-m", "fixture")
+            File(root, "tracked.txt").writeText("after\\n")
+            val status = GitWorkspaceTool(root).execute(
+                AgentToolCall("status-1", "git.workspace", mapOf("action" to "status")),
+                AtomicBoolean(false),
+            )
+            val diff = GitWorkspaceTool(root).execute(
+                AgentToolCall("diff-1", "git.workspace", mapOf("action" to "diff")),
+                AtomicBoolean(false),
+            )
+            assertEquals(ToolExecutionStatus.SUCCESS, status.status)
+            assertEquals(ToolExecutionStatus.SUCCESS, diff.status)
+            assertTrue(status.output.contains("tracked.txt"))
+            assertTrue(diff.output.contains("tracked.txt"))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
 }
