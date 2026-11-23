@@ -2,6 +2,7 @@
 #include <android/log.h>
 #include <llama.h>
 #include "unicode-conversion.h"
+#include "generation-budget.h"
 
 #include <algorithm>
 #include <atomic>
@@ -315,12 +316,12 @@ native_generate_impl(
     }
     prompt_tokens.resize(static_cast<size_t>(actual_tokens));
 
-    const int32_t max_tokens = std::clamp(static_cast<int32_t>(requested_tokens), 1, 1024);
     const uint32_t context_size = llama_n_ctx(g_context);
-    if (prompt_tokens.size() >= context_size ||
-        static_cast<uint64_t>(prompt_tokens.size()) + static_cast<uint32_t>(max_tokens) > context_size) {
+    const int32_t max_tokens = gptmax::inference::effective_generation_tokens(
+            prompt_tokens.size(), context_size, requested_tokens);
+    if (max_tokens <= 0) {
         llama_set_abort_callback(g_context, nullptr, nullptr);
-        return to_java_string(env, "Prompt and output exceed the configured context window.");
+        return to_java_string(env, "Prompt fills the configured context window; reduce the prompt.");
     }
 
     llama_memory_clear(llama_get_memory(g_context), true);
