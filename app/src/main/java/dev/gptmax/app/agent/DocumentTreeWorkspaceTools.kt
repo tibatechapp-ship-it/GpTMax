@@ -184,7 +184,9 @@ class DocumentTreeWriteTool(context: Context, treeUri: Uri) : AgentTool {
         }
         val existing = parent.findFile(name)
         if (existing != null) require(existing.isFile) { "Target is not a file." }
-        val temp = parent.createFile("text/plain", "$name.gptmax-tmp")
+        val oldContent = existing?.let { readDocument(appContext, it, 128 * 1024) }
+        val tempName = "$name.gptmax-tmp-${System.nanoTime()}"
+        val temp = parent.createFile("text/plain", tempName)
             ?: throw IllegalStateException("Could not create temporary document.")
         try {
             val output = appContext.contentResolver.openOutputStream(temp.uri, "wt")
@@ -194,8 +196,9 @@ class DocumentTreeWriteTool(context: Context, treeUri: Uri) : AgentTool {
                 temp.delete()
                 return AgentToolResult(spec.name, call.id, ToolExecutionStatus.CANCELLED, "Cancelled.")
             }
+            val backupName = "$name.gptmax-backup-${System.nanoTime()}"
             val backup = if (existing != null) {
-                require(existing.renameTo("$name.gptmax-backup")) { "Could not preserve existing file for rollback." }
+                require(existing.renameTo(backupName)) { "Could not preserve existing file for rollback." }
                 existing
             } else null
             val moved = temp.renameTo(name)
@@ -207,7 +210,62 @@ class DocumentTreeWriteTool(context: Context, treeUri: Uri) : AgentTool {
         } finally {
             if (temp.exists()) temp.delete()
         }
-        return AgentToolResult(spec.name, call.id, ToolExecutionStatus.SUCCESS, "Updated $name.")
+        val preview = renderChangePreview(oldContent.orEmpty(), content)
+        return AgentToolResult(spec.name, call.id, ToolExecutionStatus.SUCCESS,
+            "Updated $name.\n$preview")
+    }
+
+    private fun renderChangePreview(before: String, after: String): String {
+        val oldLines = before.lines()
+        val newLines = after.lines()
+        var prefix = 0
+        while (prefix < oldLines.size && prefix < newLines.size && oldLines[prefix] == newLines[prefix]) prefix++
+        var suffix = 0
+        while (suffix < oldLines.size - prefix && suffix < newLines.size - prefix &&
+            oldLines[oldLines.lastIndex - suffix] == newLines[newLines.lastIndex - suffix]) suffix++
+        val removed = oldLines.subList(prefix, oldLines.size - suffix)
+        val added = newLines.subList(prefix, newLines.size - suffix)
+        return buildString {
+            appendLine("@@ -${prefix + 1},${removed.size} +${prefix + 1},${added.size} @@")
+            removed.take(24).forEach { appendLine("- ${it.take(300)}") }
+            added.take(24).forEach { appendLine("+ ${it.take(300)}") }
+            if (removed.size > 24 || added.size > 24) appendLine("[diff preview truncated]")
+        }.take(6_000)
+    }
+}
+
+class DocumentTreeReplaceTool(context: Context, treeUri: Uri) : AgentTool {
+    private val appContext = context.applicationContext
+    private val root = DocumentFile.fromTreeUri(context, treeUri)
+        ?: throw IllegalArgumentException("Invalid workspace folder.")
+    private val writer = DocumentTreeWriteTool(context, treeUri)
+
+    override val spec = AgentToolSpec(
+        "file.replace",
+        "Replace one exact unique text fragment in a project file. Provide path, old_text, and new_text.",
+        setOf("path", "old_text", "new_text"),
+        setOf("path", "old_text", "new_text"),
+        ToolRisk.WORKSPACE_WRITE,
+    )
+
+    override suspend fun execute(call: AgentToolCall, cancellation: AtomicBoolean): AgentToolResult {
+        val oldText = call.arguments.getValue("old_text")
+        val newText = call.arguments.getValue("new_text")
+        require(oldText.isNotEmpty() && oldText.length <= 16_000 && newText.length <= 16_000) {
+            "Replacement fragments must be 1-16000 characters."
+        }
+        val file = resolveDocument(root, call.arguments.getValue("path"))
+        val content = readDocument(appContext, file, 128 * 1024)
+        val occurrences = content.windowed(oldText.length, 1, partialWindows = false).count { it == oldText }
+        require(occurrences == 1) {
+            if (occurrences == 0) "Exact old_text was not found; re-read the file before editing."
+            else "old_text is ambiguous ($occurrences occurrences); provide a larger unique fragment."
+        }
+        val updated = content.replaceFirst(oldText, newText)
+        return writer.execute(
+            AgentToolCall(call.id, "file.write", mapOf("path" to call.arguments.getValue("path"), "content" to updated)),
+            cancellation,
+        )
     }
 }
 
@@ -218,5 +276,6 @@ fun createDocumentTreeToolRegistry(context: Context, treeUri: Uri): AgentToolReg
             DocumentTreeReadTool(context, treeUri),
             DocumentTreeSearchTool(context, treeUri),
             DocumentTreeWriteTool(context, treeUri),
+            DocumentTreeReplaceTool(context, treeUri),
         ),
     )
