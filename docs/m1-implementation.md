@@ -1,54 +1,38 @@
-# M1 Implementation Notes — Android ARM64 Foundation
+# M1 Implementation Notes — Android ARM64 Inference
 
-## Current scope
+## Verified implementation
 
-The repository now includes a real Android application module, a Compose entry screen, a C++17 JNI shared library, pinned Gradle/Android toolchain configuration, unit-test wiring, and an Android CI build.
-
-The first CI attempt exposed that Google removed the deprecated Android SDK `tools` package. The workflow now uses the maintained `android-actions/setup-android@v4` action and installs only current, explicit SDK components.
-
-This is **not yet an inference proof**. llama.cpp is not linked, GGUF loading is not implemented, and no device generation benchmark exists.
+- Android app and native C++17 JNI library build in CI.
+- Native inference dependency is pinned to llama.cpp commit `f4f6f2e7db76e98c95cc9b7fc608ea669c806044`.
+- Android build is restricted to `arm64-v8a` for the M1 target.
+- JNI initializes llama.cpp, loads a GGUF from an app-private path, and creates a context.
+- Android Storage Access Framework opens a user-selected document. The app copies it into `filesDir/models`; it never passes a `content://` URI to JNI.
+- Import rejects non-`.gguf` names, empty files, insufficient known free space, size mismatches, and files without the GGUF magic header.
+- Copy is streamed to a temporary file, SHA-256 is calculated while copying, output is synced, and the file is renamed only after validation. Failed imports clean up temporary and destination files.
+- Import and native model loading run off the UI thread.
 
 ## Toolchain baseline
 
-- JDK: 17
-- Gradle: 8.9 (CI-installed; wrapper will be added when its binary is generated and checked in)
-- Android Gradle Plugin: 8.7.3
-- Kotlin: 2.0.21
-- Android compile/target SDK: 35
-- Minimum SDK: 26
-- NDK: 27.0.12077973
-- CMake: 3.22.1
+- JDK 17; Gradle 8.9
+- Android Gradle Plugin 8.7.3; Kotlin 2.0.21
+- Android compile/target SDK 35; minimum SDK 26
+- NDK 27.0.12077973; CMake 3.22.1
+- ABI: arm64-v8a
 
-Versions are pinned in the build files and workflow to make the first CI build reproducible. Review upgrades through dependency policy and CI.
+## Current native boundary
 
-## Native boundary
+The JNI bridge exposes backend status, build information, model load, unload, and shutdown. Model loading uses the API at the pinned llama.cpp revision and requests mmap loading. The context currently uses a conservative fixed configuration (2048 context tokens, batch 512, four threads); this is a bring-up default, not a device-optimized profile.
 
-The Kotlin object `NativeBridge` loads `gptmax_native` and exposes only small status/build-info calls. This deliberately validates the app-to-native packaging and JNI symbol path before introducing third-party inference code.
+## Not yet implemented or proven
 
-Next native integration steps:
-1. Resolve and pin an immutable llama.cpp upstream commit.
-2. Review its Android example, API, license, and required build flags at that exact revision.
-3. Integrate via CMake and preserve upstream notices.
-4. Add explicit native model/session ownership, cancellation, token streaming, and error mapping.
-5. Add a model picker using Android document APIs and test with a separately supplied compatible GGUF.
+- Tokenization, prompt evaluation, sampling, token-to-piece decoding, and text streaming.
+- Cooperative generation cancellation and safe concurrent unload during generation.
+- Actual GGUF load and generation on a physical Android ARM64 device.
+- Memory/thermal profiling, repeated load/unload stress, and low-memory behavior.
+- Coding agent, workspace editor, project indexing, and managed terminal execution.
 
-## Agent foundation
+A successful CI build proves compilation and packaging only. It does not prove that a selected model fits device RAM or that inference works on physical hardware.
 
-The initial Kotlin agent foundation includes:
-- A strict task lifecycle state machine with terminal-state protection.
-- A capability/risk policy that denies missing grants and requires per-action approval for process execution, network, destructive, and publish actions.
-- Unit tests for valid transitions, repair paths, terminal states, and permission decisions.
+## Required M1 completion evidence
 
-These components are policy primitives only. There is not yet a model-driven planner, tool registry, process manager, or executing agent.
-
-## Validation required for M1 completion
-
-- CI assembles the debug APK and passes unit tests.
-- APK contains the native library for arm64-v8a.
-- Install and launch on a real Android ARM64 device.
-- Load a compatible GGUF from user-selected storage.
-- Generate a deterministic smoke prompt and capture actual output.
-- Record device model, Android version, ABI, backend commit, model checksum/quantization, context size, warm-up, peak memory, first-token latency, tokens/sec, and thermal conditions.
-- Verify cancellation, unload, low-memory behavior, and repeated load/unload.
-
-CI build success alone is not the inference proof.
+Record device model, Android version, ABI, backend commit, model architecture/quantization, file size and SHA-256, context configuration, memory before/after/peak, model load latency, time to first token, tokens/second, thermal state, and an actual generated sample. Verify cancellation, unload, repeated load/unload, and low-memory failure handling before declaring M1 complete.

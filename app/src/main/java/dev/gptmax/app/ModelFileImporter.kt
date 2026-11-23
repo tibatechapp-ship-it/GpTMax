@@ -71,7 +71,11 @@ internal object ModelFileImporter {
                 }
             }
 
-            require(copied > 0L) { "The selected GGUF file is empty." }
+            require(copied >= 4L) { "The selected GGUF file is too small to be valid." }
+            val magic = temporary.inputStream().use { stream -> ByteArray(4).also { require(stream.read(it) == 4) } }
+            require(magic.contentEquals(byteArrayOf(0x47, 0x47, 0x55, 0x46))) {
+                "Invalid GGUF file: expected GGUF magic header."
+            }
             if (metadata.second != null && metadata.second != copied) {
                 throw IllegalStateException("File size changed during import; incomplete copy rejected.")
             }
@@ -82,7 +86,7 @@ internal object ModelFileImporter {
                 displayName = metadata.first,
                 file = destination,
                 sizeBytes = copied,
-                sha256 = digest.digest().joinToString("") { "%02x".format(it) },
+                sha256 = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) },
             )
         } catch (error: Exception) {
             temporary.delete()

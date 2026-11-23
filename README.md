@@ -4,7 +4,7 @@
 
 GpTMax is being designed as an AI development environment inspired by modern agentic code editors: project explorer, code editor, integrated agent, controlled terminal/runtime, Git-aware changes, and build/test feedback—powered first by on-device GGUF inference on Android ARM64.
 
-> **Current implementation:** Android Gradle app scaffold, Jetpack Compose foundation screen, C++17 JNI shared library, pinned toolchain configuration, and Android CI build/test workflow are now in the repository. The JNI bridge currently reports status only. llama.cpp is not linked; GGUF loading, local generation, editor, terminal/process runtime, and autonomous coding are not implemented yet. M1 inference proof remains incomplete.
+> **Current implementation:** Android ARM64 app scaffold, Jetpack Compose UI, C++17 JNI bridge, pinned llama.cpp source, model loading/context creation, Android Storage Access Framework import into app-private storage, SHA-256 verification, and CI build/test workflow. The app validates the GGUF magic header and invokes native model loading. Token generation, streaming, editor, managed terminal, autonomous coding, and real-device inference proof remain incomplete.
 
 ## Product north star
 
@@ -51,7 +51,7 @@ Install the Android SDK components listed in `.github/workflows/android-build.ym
 
 ## Inference and optimization
 
-The first technical proof remains Android ARM64 inference: build a pinned llama.cpp backend, load a user-selected compatible GGUF model, and generate locally on a real device. Model optimization and LookAtMyQuant-inspired quantization research remain a separate, measured track after a stable baseline exists. MLX-specific runtime code is not an Android backend and will not be transplanted directly.
+The first technical proof remains Android ARM64 inference: build the pinned llama.cpp backend, import and validate a user-selected GGUF model, load it into a native context, then implement token generation and prove local output on a real device. Model optimization and LookAtMyQuant-inspired quantization research remain a separate, measured track after a stable baseline exists. MLX-specific runtime code is not an Android backend and will not be transplanted directly.
 
 ## Platform principles
 
