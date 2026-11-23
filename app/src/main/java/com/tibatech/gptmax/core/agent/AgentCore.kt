@@ -6,7 +6,10 @@ import com.tibatech.gptmax.core.prompts.PromptTemplates
 import com.tibatech.gptmax.core.router.InferenceRouter
 import com.tibatech.gptmax.core.router.LlmRequest
 import com.tibatech.gptmax.core.router.TaskKind
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.serialization.json.Json
@@ -21,6 +24,11 @@ import kotlinx.serialization.json.jsonPrimitive
  * Planning and validation prefer the cloud (when cloud-first is on and a key
  * is set) because they benefit from long context; execution steps run on the
  * local GGUF engine whenever it is loaded.
+ *
+ * Review #5: the loop is cooperatively cancellable — the caller cancels the
+ * Job that launched [run] and every step boundary checks for cancellation, so
+ * a stop request lands between tools instead of mid-write.
+ * Review #6: every run and every tool call is timed and reported.
  */
 class AgentCore(
     private val router: InferenceRouter,
@@ -38,6 +46,7 @@ class AgentCore(
     private val json = Json { ignoreUnknownKeys = true }
 
     suspend fun run(task: AgentTask) {
+        val startedAt = System.currentTimeMillis()
         try {
             emit(AgentEvent.PhaseChanged(AgentPhase.PLANNING))
             val plan = plan(task.goal)
@@ -57,6 +66,8 @@ class AgentCore(
             val executed = mutableListOf<AgentStep>()
             var summary = ""
             for (step in plan) {
+                // Cooperative cancellation at every step boundary (review #5).
+                currentCoroutineContext().ensureActive()
                 if (step.tool == "finish") {
                     summary = argValue(step, "summary").ifBlank { "done" }
                     break
@@ -76,7 +87,9 @@ class AgentCore(
                     }
                 }
 
+                val t0 = System.currentTimeMillis()
                 val result = tools.execute(step)
+                step.durationMs = System.currentTimeMillis() - t0
                 step.result = result.output.take(500)
                 step.status = if (result.ok) AgentStep.Status.DONE else AgentStep.Status.FAILED
                 executed += step
@@ -92,8 +105,18 @@ class AgentCore(
                 .complete(LlmRequest(messages = listOf(PromptTemplates.validateSystem(diffSummary))))
             emit(AgentEvent.Log("review: ${validation.text.take(300)}"))
 
-            emit(AgentEvent.Completed(summary.ifBlank { "task finished" }, validation.source.name))
+            emit(
+                AgentEvent.Completed(
+                    summary.ifBlank { "task finished" },
+                    validation.source.name,
+                    System.currentTimeMillis() - startedAt,
+                ),
+            )
             emit(AgentEvent.PhaseChanged(AgentPhase.DONE))
+        } catch (ce: CancellationException) {
+            emit(AgentEvent.Cancelled)
+            emit(AgentEvent.PhaseChanged(AgentPhase.FAILED))
+            throw ce
         } catch (t: Throwable) {
             emit(AgentEvent.Failed(t.message ?: t.javaClass.simpleName))
             emit(AgentEvent.PhaseChanged(AgentPhase.FAILED))

@@ -22,6 +22,9 @@ data class AgentStep(
     var result: String = ""
     var status: Status = Status.PENDING
 
+    /** Wall-clock milliseconds the tool execution took (review #6: measured capabilities). */
+    var durationMs: Long = 0L
+
     enum class Status { PENDING, RUNNING, DONE, NEEDS_APPROVAL, REJECTED, FAILED }
 }
 
@@ -32,7 +35,16 @@ sealed class AgentEvent {
     data class ApprovalRequired(val step: AgentStep, val diffPreview: String) : AgentEvent()
     data class Token(val text: String) : AgentEvent()
     data class Log(val message: String) : AgentEvent()
-    data class Completed(val summary: String, val source: String) : AgentEvent()
+
+    /** Emitted when the run was cancelled by the user (review #5: per-request cancellation). */
+    object Cancelled : AgentEvent()
+
+    data class Completed(
+        val summary: String,
+        val source: String,
+        val durationMs: Long = 0L,
+    ) : AgentEvent()
+
     data class Failed(val error: String) : AgentEvent()
 }
 

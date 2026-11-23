@@ -5,6 +5,7 @@ import com.tibatech.gptmax.core.agent.AgentCore
 import com.tibatech.gptmax.core.agent.ToolRegistry
 import com.tibatech.gptmax.core.context.ContextBuilder
 import com.tibatech.gptmax.core.guardrails.ApprovalGate
+import com.tibatech.gptmax.core.guardrails.FileWriteGuard
 import com.tibatech.gptmax.core.router.CloudBridge
 import com.tibatech.gptmax.core.router.InferenceRouter
 import com.tibatech.gptmax.core.router.LocalEngine
@@ -12,6 +13,7 @@ import com.tibatech.gptmax.data.db.AppDatabase
 import com.tibatech.gptmax.data.repo.ModelRepository
 import com.tibatech.gptmax.data.repo.WorkspaceRepository
 import com.tibatech.gptmax.data.settings.SettingsStore
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -42,12 +44,25 @@ object ServiceLocator {
         private set
     lateinit var agentCore: AgentCore
         private set
+    lateinit var agentRunState: AgentRunState
+        private set
 
     fun init(context: Context) {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         settings = SettingsStore(context.applicationContext)
         database = AppDatabase.build(context.applicationContext)
-        workspace = WorkspaceRepository(context.applicationContext)
+
+        // Safety rails (review #1 + #2): policy-checked access plus a rollback
+        // journal/backups stored app-privately, never inside the user's project.
+        val rollbackDir = File(context.applicationContext.filesDir, "rollback")
+        workspace = WorkspaceRepository(
+            context.applicationContext,
+            writeGuard = FileWriteGuard(
+                journalFile = File(rollbackDir, "journal.jsonl"),
+                backupDir = File(rollbackDir, "backups"),
+            ),
+        )
+
         models = ModelRepository(context.applicationContext)
         localEngine = LocalEngine()
         cloudBridge = CloudBridge(configProvider = { settings.snapshot().provider })
@@ -55,6 +70,7 @@ object ServiceLocator {
         approvalGate = ApprovalGate(autoApprove = {
             runCatching { settings.snapshot().autoApproveWrites }.getOrDefault(false)
         })
+        agentRunState = AgentRunState()
         agentCore = AgentCore(
             router = router,
             tools = ToolRegistry(workspace),
