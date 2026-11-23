@@ -87,7 +87,7 @@ class ModelStoreTest {
         try {
             val model = File(directory, "model.gguf").apply { writeBytes(byteArrayOf(9, 8, 7, 6)) }
             val sha = ModelStore.sha256(model)
-            File(directory, "$sha.meta").writeText("not valid properties \\u0000")
+            File(directory, "$sha.meta").writeText("bad=\\uZZZZ")
             assertEquals(1, ModelStore.list(directory).size)
         } finally {
             directory.deleteRecursively()
