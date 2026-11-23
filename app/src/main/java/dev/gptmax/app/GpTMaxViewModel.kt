@@ -56,8 +56,7 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
                 runCatching { NativeBridge.backendStatus() }
                     .getOrElse { "Native backend unavailable: ${it.message ?: "unknown error"}" }
             }
-            val ready = status.contains("model loaded", ignoreCase = true) ||
-                status.contains("inference context ready", ignoreCase = true)
+            val ready = isNativeModelReady(status)
             val activeSha = if (ready) {
                 sessionPreferences.getString("active_model_sha256", null)
             } else {
