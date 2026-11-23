@@ -2,6 +2,7 @@ package dev.gptmax.app
 
 import android.net.Uri
 import android.os.Bundle
+import java.util.Locale
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -25,12 +26,15 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 
@@ -48,8 +52,9 @@ class MainActivity : ComponentActivity() {
         viewModel = ViewModelProvider(this)[GpTMaxViewModel::class.java]
         setContent {
             val state by viewModel.state.collectAsState()
-            MaterialTheme {
-                GpTMaxHome(
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                MaterialTheme {
+                    GpTMaxHome(
                     state = state,
                     onPromptChange = viewModel::updatePrompt,
                     onTemperatureChange = viewModel::updateTemperature,
@@ -60,7 +65,8 @@ class MainActivity : ComponentActivity() {
                     onDeleteModel = viewModel::deleteModel,
                     onLoadModel = viewModel::loadStoredModel,
                     onUnloadModel = viewModel::unloadModel,
-                )
+                    )
+                }
             }
         }
     }
@@ -150,7 +156,7 @@ private fun GpTMaxHome(
                         minLines = 3,
                         enabled = !state.isGenerating,
                     )
-                    Text("Temperature: ${"%.1f".format(state.temperature)}")
+                    Text("Temperature: ${String.format(Locale.US, "%.1f", state.temperature)}")
                     Slider(
                         value = state.temperature,
                         onValueChange = onTemperatureChange,
