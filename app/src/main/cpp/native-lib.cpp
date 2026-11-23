@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <limits>
 #include <mutex>
+#include <new>
+#include <exception>
 #include <string>
 #include <vector>
 
@@ -99,6 +101,32 @@ bool emit_text(JNIEnv * env, jobject callback, jmethodID method,
     return !env->ExceptionCheck();
 }
 
+class ScopedLlamaBatch {
+public:
+    explicit ScopedLlamaBatch(int32_t capacity) : batch_(llama_batch_init(capacity, 0, 1)) {}
+    ~ScopedLlamaBatch() { llama_batch_free(batch_); }
+    ScopedLlamaBatch(const ScopedLlamaBatch &) = delete;
+    ScopedLlamaBatch & operator=(const ScopedLlamaBatch &) = delete;
+    llama_batch & get() { return batch_; }
+private:
+    llama_batch batch_;
+};
+
+class ScopedLlamaSampler {
+public:
+    explicit ScopedLlamaSampler(llama_sampler * sampler) : sampler_(sampler) {}
+    ~ScopedLlamaSampler() { if (sampler_ != nullptr) llama_sampler_free(sampler_); }
+    ScopedLlamaSampler(const ScopedLlamaSampler &) = delete;
+    ScopedLlamaSampler & operator=(const ScopedLlamaSampler &) = delete;
+    llama_sampler * get() const { return sampler_; }
+private:
+    llama_sampler * sampler_;
+};
+
+jstring native_exception_result(JNIEnv * env, const char * message) noexcept {
+    return env->NewStringUTF(message);
+}
+
 bool decode_token(llama_context * context, llama_batch & batch,
                   llama_token token, llama_pos position) {
     batch.n_tokens = 1;
@@ -124,7 +152,7 @@ Java_dev_gptmax_app_NativeBridge_nativeBuildInfo(JNIEnv * env, jobject) {
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_dev_gptmax_app_NativeBridge_nativeLoadModel(JNIEnv * env, jobject, jstring model_path) {
+native_load_model_impl(JNIEnv * env, jstring model_path) {
     if (model_path == nullptr) return to_java_string(env, "Model path is empty.");
 
     std::string path;
@@ -163,8 +191,8 @@ Java_dev_gptmax_app_NativeBridge_nativeLoadModel(JNIEnv * env, jobject, jstring 
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_dev_gptmax_app_NativeBridge_nativeGenerate(
-        JNIEnv * env, jobject, jstring prompt_text, jint requested_tokens,
+native_generate_impl(
+        JNIEnv * env, jstring prompt_text, jint requested_tokens,
         jfloat requested_temperature, jobject callback) {
     if (prompt_text == nullptr || callback == nullptr) {
         return to_java_string(env, "Invalid generation arguments.");
@@ -228,10 +256,10 @@ Java_dev_gptmax_app_NativeBridge_nativeGenerate(
     const int32_t batch_capacity = static_cast<int32_t>(
             std::min<uint32_t>(static_cast<uint32_t>(actual_tokens),
                     std::max<uint32_t>(configured_batch, 1)));
-    llama_batch batch = llama_batch_init(batch_capacity, 0, 1);
+    ScopedLlamaBatch batch_owner(batch_capacity);
+    llama_batch & batch = batch_owner.get();
     if (batch.token == nullptr || batch.pos == nullptr || batch.n_seq_id == nullptr ||
         batch.seq_id == nullptr || batch.logits == nullptr) {
-        llama_batch_free(batch);
         llama_set_abort_callback(g_context, nullptr, nullptr);
         return to_java_string(env, "Could not allocate inference batch.");
     }
@@ -253,7 +281,6 @@ Java_dev_gptmax_app_NativeBridge_nativeGenerate(
         if (prompt_decode != 0) break;
     }
     if (g_cancel_requested.load(std::memory_order_relaxed) || prompt_decode != 0) {
-        llama_batch_free(batch);
         llama_set_abort_callback(g_context, nullptr, nullptr);
         return to_java_string(env, g_cancel_requested.load() ? "CANCELLED" :
                 "Prompt evaluation failed (llama_decode=" + std::to_string(prompt_decode) + ").");
@@ -262,9 +289,9 @@ Java_dev_gptmax_app_NativeBridge_nativeGenerate(
     const float temperature = std::isfinite(requested_temperature)
             ? std::clamp(static_cast<float>(requested_temperature), 0.0f, 2.0f) : 0.7f;
     auto sampler_params = llama_sampler_chain_default_params();
-    llama_sampler * sampler = llama_sampler_chain_init(sampler_params);
+    ScopedLlamaSampler sampler_owner(llama_sampler_chain_init(sampler_params));
+    llama_sampler * sampler = sampler_owner.get();
     if (sampler == nullptr) {
-        llama_batch_free(batch);
         llama_set_abort_callback(g_context, nullptr, nullptr);
         return to_java_string(env, "Could not initialize sampler.");
     }
@@ -326,8 +353,6 @@ Java_dev_gptmax_app_NativeBridge_nativeGenerate(
         }
     }
 
-    llama_sampler_free(sampler);
-    llama_batch_free(batch);
     llama_set_abort_callback(g_context, nullptr, nullptr);
 
     if (env->ExceptionCheck()) {
@@ -347,6 +372,34 @@ Java_dev_gptmax_app_NativeBridge_nativeGenerate(
             "Generation finished: prompt_tokens=%d generated_tokens=%d ended=%d",
             actual_tokens, generated, ended ? 1 : 0);
     return to_java_string(env, "GENERATION_COMPLETE:" + std::to_string(generated));
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_dev_gptmax_app_NativeBridge_nativeLoadModel(JNIEnv * env, jobject, jstring model_path) {
+    try {
+        return native_load_model_impl(env, model_path);
+    } catch (const std::bad_alloc &) {
+        return native_exception_result(env, "Native model load ran out of memory.");
+    } catch (const std::exception &) {
+        return native_exception_result(env, "Native model load failed unexpectedly.");
+    } catch (...) {
+        return native_exception_result(env, "Native model load failed with an unknown error.");
+    }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_dev_gptmax_app_NativeBridge_nativeGenerate(
+        JNIEnv * env, jobject, jstring prompt_text, jint requested_tokens,
+        jfloat requested_temperature, jobject callback) {
+    try {
+        return native_generate_impl(env, prompt_text, requested_tokens, requested_temperature, callback);
+    } catch (const std::bad_alloc &) {
+        return native_exception_result(env, "Native generation ran out of memory.");
+    } catch (const std::exception &) {
+        return native_exception_result(env, "Native generation failed unexpectedly.");
+    } catch (...) {
+        return native_exception_result(env, "Native generation failed with an unknown error.");
+    }
 }
 
 extern "C" JNIEXPORT void JNICALL
