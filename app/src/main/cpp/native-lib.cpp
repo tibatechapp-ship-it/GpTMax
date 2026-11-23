@@ -24,6 +24,7 @@ bool g_backend_initialized = false;
 
 void release_model_locked() {
     if (g_context != nullptr) {
+        llama_set_abort_callback(g_context, nullptr, nullptr);
         llama_free(g_context);
         g_context = nullptr;
     }
