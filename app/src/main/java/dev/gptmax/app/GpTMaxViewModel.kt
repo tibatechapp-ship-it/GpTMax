@@ -80,9 +80,9 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
                     it.copy(
                         modelDetails = buildString {
                             append(imported.displayName)
-                            append("\\nSize: ")
+                            append("\nSize: ")
                             append(imported.sizeBytes)
-                            append(" bytes\\nSHA-256: ")
+                            append(" bytes\nSHA-256: ")
                             append(imported.sha256)
                         },
                         nativeStatus = "Loading model and creating inference context…",
