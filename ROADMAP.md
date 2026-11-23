@@ -53,7 +53,7 @@ This roadmap defines the product sequence for GpTMax as a **local-first AI codin
 - [x] Bounded tool router/execution loop
 - [x] Agent cancellation and bounded tool-call budget
 - [x] Managed process tool foundation with timeout/output limits (not yet connected to SAF agent)
-- [ ] Task ledger with inputs, actions, outputs, and failure states
+- [x] Private metadata task ledger with tool statuses and output digests (session resume still pending)
 - [x] Deterministic mock-tool and action-parser tests (CI verification pending)
 
 ## M4 — Integrated Runtime and terminal
