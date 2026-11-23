@@ -134,7 +134,7 @@ class ProjectContextEngine(private val stateFile: File) {
         }.take(MAX_RECALL)
     }
 
-    private fun load()=synchronized(lock) {
+    private fun load(): Unit = synchronized(lock) {
         if(!stateFile.isFile||stateFile.length() !in 1..MAX_STORE.toLong())return
         runCatching{DataInputStream(BufferedInputStream(FileInputStream(stateFile))).use{d->
             if(d.readInt()!=MAGIC)return@use
@@ -151,6 +151,7 @@ class ProjectContextEngine(private val stateFile: File) {
                 repeat(d.readInt().coerceIn(0,MAX_OBSERVATIONS)){observations+=ToolObservation(d.readUTF(),d.readUTF(),d.readUTF(),d.readUTF(),d.readLong())}
             }
         }}.onFailure{files.clear();notes.clear();checkpoints.clear();stages.clear();observations.clear()}
+        Unit
     }
     private fun writeStrings(d:DataOutputStream,items:List<String>,max:Int){d.writeInt(items.size.coerceAtMost(max));items.take(max).forEach{d.writeUTF(it.take(500))}}
     private fun readStrings(d:DataInputStream,max:Int):List<String> = List(d.readInt().coerceIn(0,max)){d.readUTF()}
