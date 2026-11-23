@@ -161,6 +161,16 @@ The tool loop does not interpret free-form text as a command. Unknown tools, mis
 
 - The 0.5B smoke-test model may not reliably emit valid tool JSON or produce large code edits. Tool-loop support is an engineering capability, not a quality guarantee for that model.
 - SAF providers differ. Rename-based file replacement is attempted with a temporary document and backup, but provider-specific behavior requires device testing.
-- No Git diff/status or build/test adapter is connected to the SAF agent yet.
-- The agent currently runs one bounded session; resumable sessions, checkpoints, multi-agent delegation, and rollback are pending. The ledger is audit metadata only and does not restore a session.
+- A read-only `git.workspace` status/diff-summary tool is connected; it requires a Git executable available to the Android app, which is not yet bundled. Build/test adapters are not connected to the SAF agent yet.
+- The agent currently runs one bounded session. Durable project context and task checkpoints are implemented, but full conversation/tool-state replay, semantic embeddings, rollback, and multi-agent delegation are not yet implemented. The ledger remains audit metadata and does not restore the complete runtime session.
 - Process execution is not granted to the selected-project agent; the managed process adapter remains separately gated until a safe project execution workspace/worker is implemented.
+
+## Durable project context (local-first)
+
+- `ProjectContextEngine` stores a versioned, size-bounded binary index and project memory in app-private storage, keyed by the selected workspace URI hash.
+- The SAF context index scans bounded text files only, skips generated/dependency folders and sensitive filenames, redacts secret-like lines, and never executes repository code.
+- Re-indexing reuses cached records when a file's size and modification timestamp are unchanged; changed files are re-read and hashed. The current index is a lexical path/snippet index, not a semantic embedding database.
+- `context.recall` ranks indexed paths/snippets and matching notes against a focused query. The agent is instructed to re-read current files before making edits.
+- `context.remember` stores short project decisions/conventions; `context.checkpoint` stores goal, progress, and next step. Sensitive-looking values are rejected.
+- The app performs a bounded index refresh at the start of an agent run and writes an automatic checkpoint when the run starts and ends. These checkpoints support continuity but do not yet reconstruct prior model observations or tool-call history.
+- Indexing and memory remain on-device. They are not synced to a remote service.

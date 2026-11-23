@@ -70,7 +70,7 @@ class ProjectContextRecallTool(private val engine:ProjectContextEngine):AgentToo
 class ProjectContextRememberTool(private val engine:ProjectContextEngine):AgentTool {
     override val spec=AgentToolSpec("context.remember",
         "Store a concise non-sensitive project decision, convention, architecture fact, or unresolved issue under key/value for future sessions.",
-        setOf("key","value"),setOf("key","value"),ToolRisk.WORKSPACE_WRITE)
+        setOf("key","value"),setOf("key","value"),ToolRisk.READ_ONLY)
     override suspend fun execute(call:AgentToolCall,cancellation:AtomicBoolean):AgentToolResult {
         if(cancellation.get()) return AgentToolResult(spec.name,call.id,ToolExecutionStatus.CANCELLED,"Cancelled.")
         engine.remember(call.arguments.getValue("key"),call.arguments.getValue("value"))
@@ -82,7 +82,7 @@ class ProjectContextCheckpointTool(private val engine:ProjectContextEngine):Agen
     override val spec=AgentToolSpec("context.checkpoint",
         "Persist task progress and the exact next step so work can resume after the app closes. Do not store secrets or raw source files.",
         setOf("task_id","goal","progress","next_step"),
-        setOf("task_id","goal","progress","next_step"),ToolRisk.WORKSPACE_WRITE)
+        setOf("task_id","goal","progress","next_step"),ToolRisk.READ_ONLY)
     override suspend fun execute(call:AgentToolCall,cancellation:AtomicBoolean):AgentToolResult {
         if(cancellation.get()) return AgentToolResult(spec.name,call.id,ToolExecutionStatus.CANCELLED,"Cancelled.")
         engine.checkpoint(call.arguments.getValue("task_id"),call.arguments.getValue("goal"),
