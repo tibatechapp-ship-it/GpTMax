@@ -1,6 +1,8 @@
 package dev.gptmax.app.agent
 
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** Stable tool contract exposed to the model. Tool implementations remain model-agnostic. */
 data class AgentToolSpec(
@@ -153,7 +155,7 @@ class AgentRuntime(
                                 AgentToolResult(call.name, call.id, ToolExecutionStatus.APPROVAL_REQUIRED,
                                     "User approval required for this action.")
                             ToolDecision.ALLOW -> try {
-                                tool.execute(call, cancellation)
+                                withContext(Dispatchers.IO) { tool.execute(call, cancellation) }
                             } catch (error: Exception) {
                                 AgentToolResult(call.name, call.id, ToolExecutionStatus.FAILURE,
                                     "Tool failed: ${error.message ?: error.javaClass.simpleName}")
