@@ -18,7 +18,7 @@ import kotlinx.serialization.json.jsonPrimitive
  */
 class ToolRegistry(
     private val workspace: WorkspaceOps,
-    private val journal: WriteJournal = WriteJournal(),
+    val journal: WriteJournal = WriteJournal(),
 ) {
 
     data class Tool(
