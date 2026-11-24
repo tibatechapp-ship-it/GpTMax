@@ -32,6 +32,10 @@ sealed class AgentEvent {
     data class ApprovalRequired(val step: AgentStep, val diffPreview: String) : AgentEvent()
     data class Token(val text: String) : AgentEvent()
     data class Log(val message: String) : AgentEvent()
+
+    /** Perf measurement (review #6): phase/tool durations in milliseconds. */
+    data class Metrics(val label: String, val millis: Long) : AgentEvent()
+
     data class Completed(val summary: String, val source: String) : AgentEvent()
     data class Failed(val error: String) : AgentEvent()
 }
