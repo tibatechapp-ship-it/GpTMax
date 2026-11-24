@@ -104,3 +104,57 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:runner:1.6.2")
 }
+
+// --- Vendoring the pinned llama.cpp (see src/main/cpp/VENDOR.md) -------------
+// The tree is git-ignored by design, so a fresh checkout — local or a CI
+// runner — only holds the .gitkeep placeholder and CMakeLists.txt:13
+// add_subdirectory(llama.cpp) would fail. This task materializes the pinned
+// commit right before any native (CMake) build task runs.
+val llamaPin = "1fb8a26"
+val llamaDir = file("src/main/cpp/llama.cpp")
+
+val vendorLlamaCpp = tasks.register("vendorLlamaCpp") {
+    group = "build"
+    description = "Materializes the pinned llama.cpp tree into src/main/cpp/llama.cpp"
+    inputs.property("llamaPin", llamaPin)
+    outputs.file(llamaDir.resolve("include/llama.h"))
+    doLast {
+        val marker = llamaDir.resolve("include/llama.h")
+        if (!marker.exists()) {
+            val url = "https://github.com/ggml-org/llama.cpp/archive/$llamaPin.tar.gz"
+            logger.lifecycle("Vendoring llama.cpp pin $llamaPin from $url")
+            val tarball = File.createTempFile("llama-pin-", ".tar.gz")
+            java.net.URL(url).openStream().use { input ->
+                tarball.outputStream().use { output -> input.copyTo(output) }
+            }
+            llamaDir.mkdirs()
+            // Clear any partial leftovers from a failed previous unpack,
+            // keeping the tracked .gitkeep placeholder.
+            llamaDir.listFiles()?.forEach { if (it.name != ".gitkeep") it.deleteRecursively() }
+            val proc = ProcessBuilder(
+                "tar", "-xzf", tarball.absolutePath,
+                "-C", llamaDir.absolutePath, "--strip-components=1",
+            ).redirectErrorStream(true).start()
+            val output = proc.inputStream.bufferedReader().readText()
+            val exit = proc.waitFor()
+            tarball.delete()
+            check(exit == 0) { "llama.cpp vendoring failed (tar exit $exit): $output" }
+            check(llamaDir.resolve("CMakeLists.txt").exists()) {
+                "llama.cpp vendoring failed: CMakeLists.txt missing under $llamaDir"
+            }
+            check(marker.exists()) {
+                "llama.cpp vendoring failed: include/llama.h missing under $llamaDir"
+            }
+        }
+    }
+}
+
+// Every CMake configure/build task depends on the vendor task, so
+// assembleDebug, assembleRelease and connectedDebugAndroidTest all vendor
+// automatically — locally and in CI — while pure-Gradle tasks (unit tests,
+// lint) never trigger a download.
+tasks.matching {
+    it.name.startsWith("configureCMake") || it.name.startsWith("buildCMake")
+}.configureEach {
+    dependsOn(vendorLlamaCpp)
+}
