@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Pending
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
@@ -46,6 +47,8 @@ fun AgentScreen(viewModel: AgentViewModel = androidx.lifecycle.viewmodel.compose
     val steps by viewModel.steps.collectAsState()
     val logs by viewModel.logs.collectAsState()
     val approval by viewModel.approvalRequest.collectAsState()
+    val running by viewModel.running.collectAsState()
+    val perf by viewModel.perf.collectAsState()
     var goal by remember { mutableStateOf("") }
 
     Column(
@@ -72,9 +75,25 @@ fun AgentScreen(viewModel: AgentViewModel = androidx.lifecycle.viewmodel.compose
                 },
                 enabled = phase == AgentPhase.IDLE || phase == AgentPhase.DONE || phase == AgentPhase.FAILED,
             ) { Text("Run") }
+            // Review #5: a visible Stop control wired to per-request cancellation.
+            OutlinedButton(
+                onClick = { viewModel.stop() },
+                enabled = running,
+            ) { Text("Stop") }
         }
 
         PhaseChip(phase)
+
+        // ---- perf measurements (review #6): newest few, compact ---------------
+        if (perf.isNotEmpty()) {
+            Text(
+                perf.takeLast(4).joinToString("  ·  "),
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 14.dp),
+            )
+        }
 
         LazyColumn(
             modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -175,6 +194,7 @@ private fun StepCard(step: AgentStep) {
                         Icon(
                             imageVector = when (step.tool) {
                                 "delete_file" -> Icons.Filled.Delete
+                                "run_command" -> Icons.Filled.Terminal
                                 else -> Icons.Filled.Edit
                             },
                             contentDescription = null,

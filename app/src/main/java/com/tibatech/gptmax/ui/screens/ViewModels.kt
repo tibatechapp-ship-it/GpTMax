@@ -234,8 +234,10 @@ class ModelsViewModel : ViewModel() {
     }
 
     fun load(file: File) {
-        if (agent.running.value) {
-            engineError.value = "cannot swap models: the agent is running"
+        // Review #3: refuse while the agent runs OR the engine is mid-generation
+        // (chat streaming) — swapping underneath a native read would crash.
+        if (agent.running.value || local.busy) {
+            engineError.value = "cannot swap models: a generation is running"
             return
         }
         viewModelScope.launch {
@@ -252,10 +254,10 @@ class ModelsViewModel : ViewModel() {
         }
     }
 
-    /** Review #3: refuse to unload while the agent holds the engine. */
+    /** Review #3: refuse to unload while the agent or a chat stream holds the engine. */
     fun unload() {
-        if (agent.running.value) {
-            engineError.value = "cannot unload: the agent is running"
+        if (agent.running.value || local.busy) {
+            engineError.value = "cannot unload: a generation is running"
             return
         }
         local.unload()
@@ -263,10 +265,10 @@ class ModelsViewModel : ViewModel() {
         loadedModel.value = ""
     }
 
-    /** Review #3: refuse to delete the model file the agent is running on. */
+    /** Review #3: refuse to delete the model file a run or stream is reading. */
     fun delete(file: File) {
-        if (agent.running.value) {
-            engineError.value = "cannot delete: the agent is running on this model"
+        if (agent.running.value || local.busy) {
+            engineError.value = "cannot delete: a generation is running on this model"
             return
         }
         models.delete(file)

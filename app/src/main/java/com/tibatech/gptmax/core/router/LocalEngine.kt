@@ -23,6 +23,15 @@ class LocalEngine(
     val isLoaded: Boolean
         get() = runCatching { LlamaBridge.nativeIsLoaded() }.getOrDefault(false)
 
+    /**
+     * Review #3: true while a generation holds the engine mutex. Model
+     * management (load/unload/delete) must check this so a model file is
+     * never removed underneath a running generation — chat streaming counts
+     * too, not only agent runs.
+     */
+    val busy: Boolean
+        get() = generationMutex.isLocked
+
     val lastError: String
         get() = runCatching { LlamaBridge.nativeLastError() }.getOrDefault("")
 
