@@ -12,5 +12,11 @@ interface WorkspaceOps {
     suspend fun write(path: String, content: String): Boolean
     suspend fun delete(path: String): Boolean
     suspend fun list(path: String): List<WorkspaceRepository.FileNode>
-    suspend fun grep(pattern: String): List<WorkspaceRepository.GrepHit>
+
+    /**
+     * [maxFiles] bounds the recursive walk so a huge workspace cannot stall
+     * the agent loop. Overrides must not redeclare the default value; the
+     * production [WorkspaceRepository] already implements the two-arg form.
+     */
+    suspend fun grep(pattern: String, maxFiles: Int = 400): List<WorkspaceRepository.GrepHit>
 }
