@@ -221,6 +221,15 @@ internal class GpTMaxViewModel(application: Application) : AndroidViewModel(appl
 
     fun deleteModel(sha256: String) {
         val snapshot = mutableState.value
+        // Review fix #3: deleting the GGUF file the coding agent is actively
+        // generating through kills the native context mid-run. Refuse with an
+        // explicit message instead of silently proceeding.
+        if (snapshot.agentRunning) {
+            mutableState.update {
+                it.copy(nativeStatus = "Cannot delete a model while the coding agent is running. Stop the agent first.")
+            }
+            return
+        }
         if (snapshot.isBusy || snapshot.isGenerating) return
         if (snapshot.modelReady && snapshot.activeModelSha256 == null) {
             mutableState.update {
