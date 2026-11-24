@@ -7,16 +7,12 @@ import java.io.ByteArrayOutputStream
 import java.io.FileNotFoundException
 import java.util.concurrent.atomic.AtomicBoolean
 
-private val sensitiveDocumentNames = setOf(
-    ".env", ".env.local", ".env.production", ".npmrc", ".netrc", ".git-credentials",
-    "id_rsa", "id_ed25519", "credentials.json", "secrets.json", "keystore.jks",
-)
-
-private fun safeDocumentName(name: String): Boolean =
-    name.lowercase() !in sensitiveDocumentNames &&
-        !name.endsWith(".pem", true) &&
-        !name.endsWith(".p12", true) &&
-        !name.endsWith(".key", true)
+/**
+ * Thin wrapper kept for call sites; the real policy lives in [SensitivePaths]
+ * so every tool surface (read, search, write, context index) enforces the
+ * identical blocklist (review fix #1).
+ */
+private fun safeDocumentName(name: String): Boolean = !SensitivePaths.isSensitiveName(name)
 
 private fun documentSegments(path: String): List<String> {
     require(path.isNotBlank()) { "Path is required." }
@@ -25,8 +21,7 @@ private fun documentSegments(path: String): List<String> {
     require(parts.none { it.isBlank() || it == "." || it == ".." }) {
         "Path traversal or empty path segment is not allowed."
     }
-    val blockedDirectories = setOf(".git", ".ssh", ".aws", ".gradle", "node_modules")
-    require(parts.none { it.lowercase() in blockedDirectories }) {
+    require(parts.none { SensitivePaths.isBlockedDirectory(it) }) {
         "Access to credential, VCS metadata, and generated dependency directories is blocked."
     }
     return parts
@@ -134,7 +129,9 @@ class DocumentTreeSearchTool(context: Context, treeUri: Uri) : AgentTool {
                 if (cancellation.get() || scanned >= 300 || matches.size >= 100) return
                 val name = item.name ?: return
                 if (item.isDirectory) {
-                    if (name !in setOf(".git", ".gradle", "build", ".idea", "node_modules")) {
+                    // Review fix #1: skip the unified blocklist so .ssh/.aws/
+                    // .gnupg/.kube/.docker are never searched, not just .git/.gradle.
+                    if (!SensitivePaths.isBlockedDirectory(name)) {
                         visit(item, if (prefix.isEmpty()) name else "$prefix/$name", depth + 1)
                     }
                 } else if (item.isFile && safeDocumentName(name) && item.length() <= 128 * 1024) {
@@ -164,6 +161,9 @@ class DocumentTreeWriteTool(context: Context, treeUri: Uri) : AgentTool {
     private val root = DocumentFile.fromTreeUri(context, treeUri)
         ?: throw IllegalArgumentException("Invalid workspace folder.")
 
+    /** Review fix #2: rollback journal for every destructive step this tool takes. */
+    private val journal = WriteJournal()
+
     override val spec = AgentToolSpec(
         "file.write",
         "Create or replace a UTF-8 text file in the selected project. Provide relative path and complete content.",
@@ -174,6 +174,7 @@ class DocumentTreeWriteTool(context: Context, treeUri: Uri) : AgentTool {
 
     override suspend fun execute(call: AgentToolCall, cancellation: AtomicBoolean): AgentToolResult {
         if (cancellation.get()) return AgentToolResult(spec.name, call.id, ToolExecutionStatus.CANCELLED, "Cancelled.")
+        val startNanos = System.nanoTime()
         val segments = documentSegments(call.arguments.getValue("path"))
         val name = segments.last()
         require(safeDocumentName(name)) { "Writing credential and secret files is blocked." }
@@ -189,9 +190,21 @@ class DocumentTreeWriteTool(context: Context, treeUri: Uri) : AgentTool {
         val existing = parent.findFile(name)
         if (existing != null) require(existing.isFile) { "Target is not a file." }
         val oldContent = existing?.let { readDocument(appContext, it, 128 * 1024) }
+        val fingerprintBefore = journal.fingerprint(oldContent)
+        val fingerprintExpected = journal.fingerprint(content)
+
+        // Review fix #2: keep exactly ONE rollback copy per file. Stale backups
+        // from earlier runs are purged here; the backup recreated below holds
+        // the latest pre-change content until the next successful write to the
+        // same file purges it again. Backups are no longer deleted on success.
+        parent.listFiles()
+            .filter { (it.name ?: "").startsWith("$name.gptmax-backup-") }
+            .forEach { it.delete() }
+
         val tempName = "$name.gptmax-tmp-${System.nanoTime()}"
         val temp = parent.createFile("text/plain", tempName)
             ?: throw IllegalStateException("Could not create temporary document.")
+        var backupName: String? = null
         try {
             val output = appContext.contentResolver.openOutputStream(temp.uri, "wt")
                 ?: throw IllegalStateException("Could not open temporary document for writing.")
@@ -200,23 +213,76 @@ class DocumentTreeWriteTool(context: Context, treeUri: Uri) : AgentTool {
                 temp.delete()
                 return AgentToolResult(spec.name, call.id, ToolExecutionStatus.CANCELLED, "Cancelled.")
             }
-            val backupName = "$name.gptmax-backup-${System.nanoTime()}"
             val backup = if (existing != null) {
-                require(existing.renameTo(backupName)) { "Could not preserve existing file for rollback." }
+                val retained = "$name.gptmax-backup-${System.nanoTime()}"
+                require(existing.renameTo(retained)) { "Could not preserve existing file for rollback." }
+                backupName = retained
                 existing
             } else null
+            val entry = journal.record(
+                path = segments.joinToString("/"),
+                kind = WriteJournal.Kind.REPLACE,
+                backupName = backupName,
+                fingerprintBefore = fingerprintBefore,
+                fingerprintExpected = fingerprintExpected,
+            )
             val moved = temp.renameTo(name)
             if (!moved) {
-                backup?.renameTo(name)
+                if (backup != null) {
+                    require(backup.renameTo(name)) { "Rollback failed: original content could not be restored." }
+                    journal.complete(
+                        entry,
+                        WriteJournal.Verification.FAILED_ROLLED_BACK,
+                        "Document provider failed to finalize the replacement; original content restored from backup.",
+                    )
+                } else {
+                    journal.complete(
+                        entry,
+                        WriteJournal.Verification.FAILED_UNRESOLVED,
+                        "Document provider failed to finalize the replacement; no previous file existed.",
+                    )
+                }
                 throw IllegalStateException("Document provider could not finalize file replacement.")
             }
-            backup?.delete()
+
+            // Review fix #2: read-back verification. The finalized document must
+            // hash to exactly the content the agent requested; otherwise an
+            // external process or provider glitch altered the file and the
+            // original content is restored from the retained backup.
+            val finalDocument = parent.findFile(name)
+            val actual = finalDocument?.takeIf { it.isFile }
+                ?.let { runCatching { readDocument(appContext, it, 128 * 1024) }.getOrNull() }
+            val verified = actual != null &&
+                WriteJournal.sameFingerprint(journal.fingerprint(actual), fingerprintExpected)
+            if (!verified) {
+                val restored = if (backup != null) {
+                    parent.findFile(name)?.delete()
+                    backup.renameTo(name)
+                } else false
+                journal.complete(
+                    entry,
+                    if (restored) WriteJournal.Verification.FAILED_ROLLED_BACK
+                    else WriteJournal.Verification.FAILED_UNRESOLVED,
+                    if (restored) "Post-write fingerprint mismatch; original content restored from backup."
+                    else "Post-write fingerprint mismatch and rollback was not possible; keep the backup document for manual recovery.",
+                )
+                throw IllegalStateException("Post-write verification failed: on-disk content diverged from the requested change.")
+            }
+            journal.complete(entry, WriteJournal.Verification.VERIFIED, "Read-back fingerprint matched the requested content.")
         } finally {
             if (temp.exists()) temp.delete()
         }
         val preview = renderChangePreview(oldContent.orEmpty(), content)
-        return AgentToolResult(spec.name, call.id, ToolExecutionStatus.SUCCESS,
-            "Updated $name.\n$preview")
+        val rollbackNote = backupName
+            ?.let { "Rollback copy retained: $it (latest pre-change content; purged on the next successful write to this file)." }
+            ?: "New file created; no previous content required a rollback copy."
+        return AgentToolResult(
+            spec.name,
+            call.id,
+            ToolExecutionStatus.SUCCESS,
+            "Updated $name.\n$preview\n$rollbackNote",
+            (System.nanoTime() - startNanos) / 1_000_000L,
+        )
     }
 
     private fun renderChangePreview(before: String, after: String): String {

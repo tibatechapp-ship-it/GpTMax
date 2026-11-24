@@ -18,7 +18,10 @@ class DocumentTreeContextIndexTool(context:Context,treeUri:Uri,private val engin
 
     override suspend fun execute(call:AgentToolCall,cancellation:AtomicBoolean):AgentToolResult {
         val start=System.nanoTime()
-        val ignored=setOf(".git",".gradle",".idea","node_modules","build","dist","target",".next",".venv","venv","__pycache__")
+        // Review fix #1: the ignored-dir and sensitive-name lists previously
+        // duplicated (and diverged from) the workspace tools' blocklists.
+        // Both layers now consult the single SensitivePaths policy, so .ssh,
+        // .aws, .gnupg, .kube and .docker are never indexed either.
         val allowed=setOf("kt","kts","java","xml","json","yaml","yml","toml","md","txt","py","js","jsx","ts","tsx",
             "html","css","scss","gradle","properties","sh","c","h","cpp","hpp","rs","go","dart")
         val records=mutableListOf<ProjectContextEngine.FileRecord>()
@@ -35,12 +38,11 @@ class DocumentTreeContextIndexTool(context:Context,treeUri:Uri,private val engin
                 val name=child.name.orEmpty()
                 if(name.isBlank()) {skipped++;traversalComplete=false;continue}
                 if(child.isDirectory) {
-                    if(name !in ignored&&prefix.count{it=='/'}<MAX_DEPTH) queue.add(child to (if(prefix.isEmpty()) name else "$prefix/$name"))
+                    if(!SensitivePaths.isBlockedDirectory(name)&&prefix.count{it=='/'}<MAX_DEPTH) queue.add(child to (if(prefix.isEmpty()) name else "$prefix/$name"))
                     else skipped++
                     continue
                 }
-                if(!child.isFile||name.startsWith(".env",true)||name.lowercase() in setOf(".npmrc",".netrc","credentials.json","secrets.json","id_rsa","id_ed25519")||
-                    listOf(".pem",".key",".p12",".jks").any{name.endsWith(it,true)}||
+                if(!child.isFile||SensitivePaths.isSensitiveName(name)||
                     name.substringAfterLast('.', "").lowercase() !in allowed||child.length() !in 1..MAX_BYTES.toLong()) {skipped++;continue}
                 val path=if(prefix.isEmpty())name else "$prefix/$name"
                 scanned++
@@ -69,7 +71,9 @@ class ProjectContextRecallTool(private val engine:ProjectContextEngine):AgentToo
         setOf("query"),setOf("query","limit"),ToolRisk.READ_ONLY)
     override suspend fun execute(call:AgentToolCall,cancellation:AtomicBoolean):AgentToolResult {
         if(cancellation.get()) return AgentToolResult(spec.name,call.id,ToolExecutionStatus.CANCELLED,"Cancelled.")
-        val limit=call.arguments["limit"]?.toIntOrNull()?:8
+        // Review fix #5: clamp the observation budget so a runaway limit value
+        // cannot crowd the local context window in a single recall call.
+        val limit=(call.arguments["limit"]?.toIntOrNull()?:8).coerceIn(1,16)
         return AgentToolResult(spec.name,call.id,ToolExecutionStatus.SUCCESS,
             engine.recall(call.arguments.getValue("query"),limit))
     }

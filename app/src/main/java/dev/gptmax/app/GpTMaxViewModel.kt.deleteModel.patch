@@ -1,0 +1,49 @@
+    fun deleteModel(sha256: String) {
+        val snapshot = mutableState.value
+        // Review fix #3: deleting a GGUF file the coding agent is actively
+        // generating through crashes the native context and kills the run.
+        // Refuse with an explicit message instead of a silent return.
+        if (snapshot.agentRunning) {
+            mutableState.update {
+                it.copy(nativeStatus = "Cannot delete a model while the coding agent is running. Stop the agent first.")
+            }
+            return
+        }
+        if (snapshot.isBusy || snapshot.isGenerating) return
+        if (snapshot.modelReady && snapshot.activeModelSha256 == null) {
+            mutableState.update {
+                it.copy(nativeStatus = "Loaded model identity is unknown. Unload the runtime before deleting stored files.")
+            }
+            return
+        }
+        viewModelScope.launch {
+            mutableState.update { it.copy(isBusy = true, nativeStatus = "Removing stored model…") }
+            try {
+                withContext(Dispatchers.IO) {
+                    val directory = File(getApplication<Application>().filesDir, "models")
+                    if (snapshot.activeModelSha256 == sha256) {
+                        NativeBridge.nativeUnloadModel()
+                    }
+                    ModelStore.delete(directory, sha256)
+                }
+                if (snapshot.activeModelSha256 == sha256) {
+                    sessionPreferences.edit().remove("active_model_sha256").apply()
+                }
+                mutableState.update { current ->
+                    current.copy(
+                        modelReady = if (current.activeModelSha256 == sha256) false else current.modelReady,
+                        activeModelSha256 = if (current.activeModelSha256 == sha256) null else current.activeModelSha256,
+                        nativeStatus = if (current.activeModelSha256 == sha256) "Model unloaded and deleted."
+                            else "Stored model deleted.",
+                    )
+                }
+                refreshModels()
+            } catch (error: Exception) {
+                mutableState.update {
+                    it.copy(nativeStatus = "Could not delete model: ${error.message ?: error.javaClass.simpleName}")
+                }
+            } finally {
+                mutableState.update { it.copy(isBusy = false) }
+            }
+        }
+    }
