@@ -11,8 +11,14 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * On-device gate for the CI emulator job: the app installs, the native ABI
- * target matches, and the guardrails behave identically on device.
+ * On-device gate for the CI emulator job: the app installs, the packaged
+ * native ABI matches the device, and the guardrails behave identically on
+ * device.
+ *
+ * Review #4: the expected ABI set is injected by Gradle (resValue
+ * `expected_abis`) — "arm64-v8a" for phone builds and
+ * "arm64-v8a,x86_64" for the CI emulator job — so the same test gates
+ * both targets without hardcoding the primary ABI.
  */
 @RunWith(AndroidJUnit4::class)
 class DeviceSmokeTest {
@@ -32,8 +38,15 @@ class DeviceSmokeTest {
     }
 
     @Test
-    fun primaryAbiIsArm64() {
-        val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull()
-        assertEquals("arm64-v8a", abi)
+    fun deviceAbiIsPackaged() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val packaged = context.getString(R.string.expected_abis)
+            .split(',')
+            .map { it.trim() }
+        val primary = android.os.Build.SUPPORTED_ABIS.firstOrNull()
+        assertTrue(
+            "device primary ABI $primary is not among the packaged ABIs $packaged",
+            primary != null && primary in packaged,
+        )
     }
 }
