@@ -83,7 +83,7 @@ class CloudBridge(
                         source = Source.CLOUD,
                     )
                 }
-                val reader: BufferedReader = response.body?.charStream()
+                val reader: BufferedReader = response.body?.charStream()?.buffered()
                     ?: return@withContext LlmResult(text = sb.toString(), source = Source.CLOUD)
 
                 reader.forEachLine { line ->

@@ -1,5 +1,8 @@
 package com.tibatech.gptmax
 
+import com.tibatech.gptmax.core.agent.AgentStep
+import com.tibatech.gptmax.core.agent.ToolRegistry
+import com.tibatech.gptmax.core.agent.WorkspaceOps
 import com.tibatech.gptmax.core.agent.WriteJournal
 import com.tibatech.gptmax.core.context.ContextBuilder
 import com.tibatech.gptmax.core.guardrails.PathGuard

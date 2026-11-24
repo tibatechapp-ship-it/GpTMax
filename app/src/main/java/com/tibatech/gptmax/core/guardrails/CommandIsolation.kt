@@ -35,6 +35,12 @@ object CommandIsolation {
     private val WHITESPACE = Regex("\\s+")
 
     fun validate(raw: String): Verdict {
+        // Injection guard runs on the RAW string first: splitting on
+        // whitespace would otherwise launder newlines/CRs into argument
+        // separators instead of denying them (caught by CommandIsolationTest).
+        if (raw.any { it in FORBIDDEN_CHARS }) {
+            return Verdict.Denied("forbidden character in command")
+        }
         val argv = raw.trim().split(WHITESPACE).filter { it.isNotBlank() }
         if (argv.isEmpty()) return Verdict.Denied("empty command")
         if (argv.size > MAX_TOKENS) return Verdict.Denied("too many arguments (${argv.size})")

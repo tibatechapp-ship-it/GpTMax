@@ -91,7 +91,7 @@ class WorkspaceRepository(private val context: Context) : WorkspaceOps {
         if (!PathGuard.isAllowed(path)) return@withContext false
         if (SensitivePaths.isSensitive(path)) return@withContext false
         if (SensitivePaths.isProtectedFromWrite(path)) return@withContext false
-        runCatching { resolve(path)?.delete() }.getOrDefault(false)
+        runCatching { resolve(path)?.delete() == true }.getOrDefault(false)
     }
 
     // ------------------------------------------------------------------ grep
@@ -103,7 +103,7 @@ class WorkspaceRepository(private val context: Context) : WorkspaceOps {
             val hits = mutableListOf<GrepHit>()
             var scanned = 0
 
-            fun walk(dirPath: String) {
+            suspend fun walk(dirPath: String) {
                 if (hits.size >= 200 || scanned >= maxFiles) return
                 list(dirPath).forEach { node ->
                     if (SensitivePaths.isSensitive(node.path)) return@forEach
@@ -137,14 +137,15 @@ class WorkspaceRepository(private val context: Context) : WorkspaceOps {
 
     private suspend fun ensureDir(path: String): DocumentFile? {
         val root = _root.value ?: return null
-        return path.trim('/').split('/').filter { it.isNotBlank() }.fold(root) { dir, part ->
-            val found = dir.findFile(part)
-            when {
-                found != null && found.isDirectory -> found
-                found != null -> null
-                else -> dir.createDirectory(part)
+        return path.trim('/').split('/').filter { it.isNotBlank() }
+            .fold(root) { dir: DocumentFile?, part ->
+                val found = dir?.findFile(part)
+                when {
+                    found != null && found.isDirectory -> found
+                    found != null -> null
+                    else -> dir?.createDirectory(part)
+                }
             }
-        }
     }
 
     private fun splitParent(path: String): Pair<String, String> {

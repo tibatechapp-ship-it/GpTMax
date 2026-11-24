@@ -1,6 +1,6 @@
 package com.tibatech.gptmax.core.router
 
-import com.tibatech.gptmax.data.settings.GpTMaxSettings
+import com.tibatech.gptmax.data.settings.SettingsStore
 
 /**
  * Routes every request according to the strategy matrix from the report:
@@ -11,7 +11,7 @@ import com.tibatech.gptmax.data.settings.GpTMaxSettings
  *  - any failure or missing key . graceful fallback to the other source
  */
 class InferenceRouter(
-    private val settings: GpTMaxSettings,
+    private val settings: SettingsStore,
     private val local: LocalEngine,
     private val cloud: CloudBridge,
 ) {

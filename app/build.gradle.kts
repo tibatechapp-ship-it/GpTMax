@@ -74,6 +74,9 @@ android {
 
 dependencies {
     implementation(libs.androidx.core.ktx)
+    // SAF workspace access (WorkspaceRepository) — the tree grant flow and
+    // every workspace tool depend on DocumentFile.
+    implementation(libs.androidx.documentfile)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)

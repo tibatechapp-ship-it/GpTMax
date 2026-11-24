@@ -18,7 +18,7 @@ class ContextBuilder(private val workspace: WorkspaceOps) {
     /** Flat tree, depth/entry limited, sized for a 4k-token local window. */
     suspend fun repoMap(maxEntries: Int = 150): String {
         val lines = mutableListOf<String>()
-        fun walk(path: String, depth: Int) {
+        suspend fun walk(path: String, depth: Int) {
             if (lines.size >= maxEntries || depth > MAX_DEPTH) return
             workspace.list(path).sortedBy { it.path }.forEach { node ->
                 if (lines.size >= maxEntries) return
@@ -52,7 +52,8 @@ class ContextBuilder(private val workspace: WorkspaceOps) {
                 out.append("### ").append(path).append(" (blocked: sensitive path)\n\n")
                 continue
             }
-            val content = workspace.read(path) ?: run {
+            val content = workspace.read(path)
+            if (content == null) {
                 out.append("### ").append(path).append(" (unreadable)\n\n")
                 continue
             }
