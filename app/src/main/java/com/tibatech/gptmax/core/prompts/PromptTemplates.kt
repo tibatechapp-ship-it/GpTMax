@@ -16,6 +16,7 @@ object PromptTemplates {
 - write_file(path, content) -> create/overwrite a file (requires user approval)
 - delete_file(path)       -> delete a file (requires user approval)
 - grep(pattern)           -> search the workspace
+- run_command(command)    -> run an allowlisted, read-only command in a sandbox (requires user approval)
 - finish(summary)         -> end the task"""
 
     fun chatSystem(): String =
@@ -34,7 +35,7 @@ object PromptTemplates {
             - Each element: {"tool": string, "args": object, "why": string}
             - Prefer the fewest steps that fully satisfy the goal.
             - Read steps (list_dir/read_file/grep) run automatically;
-              write steps (write_file/delete_file) require user approval.
+              write steps (write_file/delete_file/run_command) require user approval.
             - End with a finish step summarizing the change.
         """.trimIndent(),
     )

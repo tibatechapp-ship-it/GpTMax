@@ -58,7 +58,11 @@ object PlanParser {
                     tool = tool,
                     argsJson = args,
                     description = why,
-                    isWrite = tool == "write_file" || tool == "delete_file",
+                    // Review #6: run_command is write-class — it always goes
+                    // through the user approval gate before execution.
+                    isWrite = tool == "write_file" ||
+                        tool == "delete_file" ||
+                        tool == "run_command",
                 )
             }.filter { it.tool.isNotBlank() }
         }.getOrDefault(emptyList())

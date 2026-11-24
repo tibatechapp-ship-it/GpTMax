@@ -1,5 +1,6 @@
 package com.tibatech.gptmax.core.agent
 
+import com.tibatech.gptmax.core.context.ContextBudget
 import com.tibatech.gptmax.core.context.ContextBuilder
 import com.tibatech.gptmax.core.guardrails.ApprovalGate
 import com.tibatech.gptmax.core.prompts.PromptTemplates
@@ -28,9 +29,12 @@ import kotlinx.serialization.json.jsonPrimitive
  * Review #3: [running] is exposed so the Models screen can refuse to delete
  * or unload the engine while the agent holds it.
  * Review #5: [cancel] gives per-request cancellation; every loop boundary
- * (before each step, after the approval gate, before validation) aborts.
+ * (before each step, after the approval gate, before validation) aborts, and
+ * step observations are trimmed to a hard budget before they are fed back to
+ * the validator, so stale results cannot crowd the context window.
  * Review #6: phases and tool calls are timed and emitted as Metrics events,
- * and the plan is bounded to [MAX_STEPS] to cap agent autonomy.
+ * the plan is bounded to [MAX_STEPS] to cap agent autonomy, and run_command
+ * previews show the sandboxed command before the user approves it.
  */
 class AgentCore(
     private val router: InferenceRouter,
@@ -91,6 +95,7 @@ class AgentCore(
             // ---- ACTING ------------------------------------------------------
             emit(AgentEvent.PhaseChanged(AgentPhase.ACTING))
             val executed = mutableListOf<AgentStep>()
+            val observations = mutableListOf<String>()
             var summary = ""
             var stopped = false
             for (step in bounded) {
@@ -128,6 +133,10 @@ class AgentCore(
                 step.status = if (result.ok) AgentStep.Status.DONE else AgentStep.Status.FAILED
                 executed += step
                 emit(AgentEvent.StepFinished(step))
+                // Review #5: one bounded observation per executed step;
+                // ContextBudget trims the OLDEST ones before validation.
+                observations += "${step.tool} ${argValue(step, "path")} -> " +
+                    "${step.status.name.lowercase()}: ${result.output.take(OBSERVATION_CHARS)}"
             }
             if (stopped) {
                 emit(AgentEvent.Failed("cancelled by user"))
@@ -146,10 +155,33 @@ class AgentCore(
             val diffSummary = executed
                 .filter { it.isWrite && it.status == AgentStep.Status.DONE }
                 .joinToString("\n") { "${it.tool} ${argValue(it, "path")}" }
+            // Review #5: old observations must not crowd the context budget —
+            // keep the newest ones that fit, newest-first, and feed only those
+            // to the validator alongside the change summary.
+            val boundedObservations = ContextBudget
+                .trimNewestFirst(observations, OBSERVATION_BUDGET_CHARS) { it.length }
+                .joinToString("\n")
+            val reviewInput = buildString {
+                append(diffSummary)
+                if (boundedObservations.isNotBlank()) {
+                    append("\n\nRecent observations:\n")
+                    append(boundedObservations)
+                }
+            }
             val validation = router.forTask(TaskKind.VALIDATE)
-                .complete(LlmRequest(messages = listOf(PromptTemplates.validateSystem(diffSummary))))
+                .complete(LlmRequest(messages = listOf(PromptTemplates.validateSystem(reviewInput))))
             emit(AgentEvent.Metrics("validating", elapsed(validateStart)))
             emit(AgentEvent.Log("review: ${validation.text.take(300)}"))
+
+            // Review #6: surface the p95 snapshot of the slowest tools.
+            val stats = tools.snapshot().take(3)
+            if (stats.isNotEmpty()) {
+                emit(
+                    AgentEvent.Log(
+                        "perf p95 — " + stats.joinToString(", ") { "${it.tool} p95=${it.p95Ms}ms" },
+                    ),
+                )
+            }
 
             emit(AgentEvent.Metrics("total", elapsed(runStart)))
             emit(AgentEvent.Completed(summary.ifBlank { "task finished" }, validation.source.name))
@@ -196,19 +228,21 @@ class AgentCore(
     }.getOrDefault("")
 
     /** Shows what a write step will do before asking the user. */
-    private fun previewWrite(step: AgentStep): String {
-        val path = argValue(step, "path")
-        val content = argValue(step, "content")
-        return if (step.tool == "delete_file") {
-            "DELETE $path"
-        } else {
-            "WRITE $path\n" + content.take(600)
-        }
+    private fun previewWrite(step: AgentStep): String = when (step.tool) {
+        "delete_file" -> "DELETE ${argValue(step, "path")}"
+        "run_command" -> "RUN (sandboxed, read-only)\n" + argValue(step, "command").take(600)
+        else -> "WRITE ${argValue(step, "path")}\n" + argValue(step, "content").take(600)
     }
 
     private suspend fun emit(e: AgentEvent) = _events.emit(e)
 
     private companion object {
         const val MAX_STEPS = 24
+
+        /** Per-observation cap before budgeting (review #5). */
+        const val OBSERVATION_CHARS = 200
+
+        /** Hard budget for fed-back observations, newest first (review #5). */
+        const val OBSERVATION_BUDGET_CHARS = 6_000
     }
 }

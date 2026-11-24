@@ -2,6 +2,7 @@ package com.tibatech.gptmax.data
 
 import android.content.Context
 import com.tibatech.gptmax.core.agent.AgentCore
+import com.tibatech.gptmax.core.agent.PerformanceMonitor
 import com.tibatech.gptmax.core.agent.ToolRegistry
 import com.tibatech.gptmax.core.context.ContextBuilder
 import com.tibatech.gptmax.core.guardrails.ApprovalGate
@@ -40,6 +41,8 @@ object ServiceLocator {
         private set
     lateinit var approvalGate: ApprovalGate
         private set
+    lateinit var performance: PerformanceMonitor
+        private set
     lateinit var agentCore: AgentCore
         private set
 
@@ -55,9 +58,16 @@ object ServiceLocator {
         approvalGate = ApprovalGate(autoApprove = {
             runCatching { settings.snapshot().autoApproveWrites }.getOrDefault(false)
         })
+        // Review #6: one shared performance monitor feeds tool timing stats,
+        // and the app sandbox dir backs the isolated run_command scratch space.
+        performance = PerformanceMonitor()
         agentCore = AgentCore(
             router = router,
-            tools = ToolRegistry(workspace),
+            tools = ToolRegistry(
+                workspace,
+                monitor = performance,
+                commandContext = context.applicationContext,
+            ),
             context = ContextBuilder(workspace),
             approval = approvalGate,
         )
