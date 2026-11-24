@@ -1,8 +1,10 @@
 package com.tibatech.gptmax.core.router
 
 import com.tibatech.gptmax.bridge.LlamaBridge
+import com.tibatech.gptmax.bridge.OnTokenListener
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Mutex
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
@@ -60,8 +62,8 @@ class LocalEngine(
             val maxTokens = request.maxTokens ?: defaultMaxTokens
             val temperature = request.temperature ?: 0.2f
 
-            generationMutex.withLock {
-                val text = withTimeout(GENERATION_TIMEOUT_MS) {
+            val text = generationMutex.withLock {
+                withTimeout(GENERATION_TIMEOUT_MS) {
                     LlamaBridge.nativeGenerate(
                         prompt = prompt,
                         maxTokens = maxTokens,
@@ -75,7 +77,6 @@ class LocalEngine(
                         },
                     )
                 }
-                text
             }
             LlmResult(text = text, source = Source.LOCAL)
         }

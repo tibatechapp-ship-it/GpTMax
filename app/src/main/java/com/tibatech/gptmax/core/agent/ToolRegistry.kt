@@ -15,7 +15,7 @@ import kotlinx.serialization.json.jsonPrimitive
  * the loop; write tools are routed through the ApprovalGate first.
  *
  * Review #1: reads, listings and grep hits all funnel through SensitivePaths
- * so .aws/.ssh/.env*/keystore content never reaches the model context.
+ * so .aws, .ssh, dot-env files and keystore content never reach the model context.
  * Review #2: every write/delete is journaled with a pre-change fingerprint
  * and a rollback copy, then verified by read-back.
  * Review #6: PathGuard confines every path argument to the granted workspace,
