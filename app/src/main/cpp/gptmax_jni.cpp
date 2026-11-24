@@ -1,7 +1,7 @@
 // =============================================================================
 // GpTMax — JNI bridge over llama.cpp (Android, arm64-v8a)
 // -----------------------------------------------------------------------------
-// Written against the llama.cpp b4xxx API line (see VENDOR.md for the pin).
+// Written against the pinned llama.cpp surface (see VENDOR.md for the pin).
 // Responsibilities:
 //   * load / free a GGUF model into a llama.cpp context
 //   * run chat completions with incremental token streaming to Kotlin
@@ -13,6 +13,7 @@
 #include <jni.h>
 #include <android/log.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -217,7 +218,9 @@ Java_com_tibatech_gptmax_bridge_LlamaBridge_nativeGenerate(
         llama_sampler_chain_add(smpl, llama_sampler_init_top_k(topK > 0 ? topK : 40));
         llama_sampler_chain_add(smpl, llama_sampler_init_top_p(topP > 0.0f ? topP : 0.9f, 1));
         llama_sampler_chain_add(smpl, llama_sampler_init_temp(temperature));
-        llama_sampler_chain_add(smpl, llama_sampler_init_dist(llama_sampler_seed(smpl)));
+        // llama_sampler_seed() does not exist in the pin; LLAMA_DEFAULT_SEED
+        // (0xFFFFFFFF) makes the dist sampler draw a random seed per chain.
+        llama_sampler_chain_add(smpl, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
     }
 
     // --- decode loop -----------------------------------------------------------
@@ -227,10 +230,12 @@ Java_com_tibatech_gptmax_bridge_LlamaBridge_nativeGenerate(
     std::vector<char> pieceBuf(256);
 
     for (int32_t i = 0; i < limit && !g_cancelled.load(); ++i) {
-        const llama_token tok = llama_sampler_sample(smpl, g_engine.ctx, -1);
+        // Non-const: llama_batch_get_one() takes llama_token* (not const) in the pin.
+        llama_token tok = llama_sampler_sample(smpl, g_engine.ctx, -1);
         if (llama_vocab_is_eog(g_engine.vocab, tok)) break;
 
-        const int32_t n = llama_vocab_token_to_piece(
+        // Pin API name: llama_token_to_piece (llama_vocab_token_to_piece does not exist).
+        const int32_t n = llama_token_to_piece(
             g_engine.vocab, tok, pieceBuf.data(),
             static_cast<int32_t>(pieceBuf.size()), 0, true);
         if (n > 0) {
