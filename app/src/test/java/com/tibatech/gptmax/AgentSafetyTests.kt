@@ -227,5 +227,8 @@ private class FakeWorkspace : WorkspaceOps {
 
     override suspend fun list(path: String): List<WorkspaceRepository.FileNode> = nodes.toList()
 
-    override suspend fun grep(pattern: String): List<WorkspaceRepository.GrepHit> = emptyList()
+    override suspend fun grep(
+        pattern: String,
+        maxFiles: Int,
+    ): List<WorkspaceRepository.GrepHit> = emptyList()
 }
