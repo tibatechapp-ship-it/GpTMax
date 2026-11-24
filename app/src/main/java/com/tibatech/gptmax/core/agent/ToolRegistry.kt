@@ -1,6 +1,7 @@
 package com.tibatech.gptmax.core.agent
 
 import android.content.Context
+import com.tibatech.gptmax.core.guardrails.CommandIsolation
 import com.tibatech.gptmax.core.guardrails.PathGuard
 import com.tibatech.gptmax.core.guardrails.SensitivePaths
 import java.io.File
