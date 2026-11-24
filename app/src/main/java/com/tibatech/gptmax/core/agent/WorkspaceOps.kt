@@ -12,5 +12,12 @@ interface WorkspaceOps {
     suspend fun write(path: String, content: String): Boolean
     suspend fun delete(path: String): Boolean
     suspend fun list(path: String): List<WorkspaceRepository.FileNode>
-    suspend fun grep(pattern: String): List<WorkspaceRepository.GrepHit>
+
+    /**
+     * Recursive content search. [maxFiles] caps how many text files are
+     * opened (scan budget); the default keeps small workspaces responsive.
+     * The interface carries the default so implementations override without
+     * repeating it and callers can omit it.
+     */
+    suspend fun grep(pattern: String, maxFiles: Int = 500): List<WorkspaceRepository.GrepHit>
 }
