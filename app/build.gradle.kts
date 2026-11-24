@@ -19,18 +19,25 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
+        // Local-first strategy: arm64-v8a by default (per development plan).
+        // llama.cpp delivers its best throughput on arm64 via dotprod/i8mm.
+        // Fix #4: the CI emulator gate overrides this via
+        // -Pgptmax.abiFilters=arm64-v8a,x86_64 because hosted emulators
+        // run on x86_64 hosts.
+        val abiOverride = (project.findProperty("gptmax.abiFilters") as String?)
+            ?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it.isNotBlank() }
+        val effectiveAbis = abiOverride ?: listOf("arm64-v8a")
+
         ndk {
-            // Local-first strategy: arm64-v8a by default (per development plan).
-            // llama.cpp delivers its best throughput on arm64 via dotprod/i8mm.
-            // Fix #4: the CI emulator gate overrides this via
-            // -Pgptmax.abiFilters=arm64-v8a,x86_64 because hosted emulators
-            // run on x86_64 hosts.
-            val abiOverride = (project.findProperty("gptmax.abiFilters") as String?)
-                ?.split(",")
-                ?.map { it.trim() }
-                ?.filter { it.isNotBlank() }
-            abiFilters += abiOverride ?: listOf("arm64-v8a")
+            abiFilters += effectiveAbis
         }
+
+        // Review #4: the on-device ABI gate reads this resource so phone builds
+        // (arm64-v8a) and the CI emulator job (arm64-v8a,x86_64) both assert
+        // against what the APK actually ships.
+        resValue("string", "expected_abis", effectiveAbis.joinToString(","))
 
         externalNativeBuild {
             cmake {
