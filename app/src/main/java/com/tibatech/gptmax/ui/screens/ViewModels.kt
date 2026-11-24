@@ -19,6 +19,7 @@ import com.tibatech.gptmax.data.repo.WorkspaceRepository
 import com.tibatech.gptmax.data.settings.GpTMaxSettings
 import java.io.File
 import java.util.UUID
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -50,10 +51,13 @@ class ChatViewModel : ViewModel() {
         db.messageDao().observe(sessionId)
             .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    /** Per-request cancellation (review #5): the job is cancelled, not just the engine. */
+    private var streamJob: Job? = null
+
     fun send(text: String) {
         val trimmed = text.trim()
         if (trimmed.isEmpty() || _streaming.value) return
-        viewModelScope.launch {
+        streamJob = viewModelScope.launch {
             _streaming.value = true
             _streamText.value = ""
             db.messageDao().insert(MessageEntity(sessionId = sessionId, role = "user", content = trimmed))
@@ -64,7 +68,7 @@ class ChatViewModel : ViewModel() {
             val client = router.forTask(com.tibatech.gptmax.core.router.TaskKind.CHAT)
             _badge.value = client.source
 
-            val result = runCatching {
+            runCatching {
                 client.stream(
                     LlmRequest(
                         messages = listOf(ChatMessage("system", PromptTemplates.chatSystem())) +
@@ -90,6 +94,8 @@ class ChatViewModel : ViewModel() {
     }
 
     fun cancel() {
+        streamJob?.cancel()
+        streamJob = null
         ServiceLocator.localEngine.cancel()
         _streaming.value = false
     }
@@ -109,6 +115,13 @@ class AgentViewModel : ViewModel() {
     val phase = MutableStateFlow<AgentPhase>(AgentPhase.IDLE)
     val steps = MutableStateFlow<List<AgentStep>>(emptyList())
     val logs = MutableStateFlow<List<String>>(emptyList())
+
+    /** Live view of the agent's running flag — screens disable destructive actions when true. */
+    val running: StateFlow<Boolean> = core.running
+
+    /** Perf measurements (review #6): "label 123ms" lines, newest last. */
+    val perf = MutableStateFlow<List<String>>(emptyList())
+
     val approvalRequest = approval.pending
 
     init {
@@ -122,6 +135,10 @@ class AgentViewModel : ViewModel() {
                         "approval needed: ${e.step.tool} ${e.step.description}",
                     )
                     is AgentEvent.Log -> appendLog(e.message)
+                    is AgentEvent.Metrics -> {
+                        perf.value = (perf.value + "${e.label} ${e.millis}ms").takeLast(20)
+                        appendLog("perf: ${e.label} ${e.millis}ms")
+                    }
                     is AgentEvent.Completed -> {
                         appendLog("completed: ${e.summary}")
                         if (runRowId != 0L) {
@@ -148,14 +165,18 @@ class AgentViewModel : ViewModel() {
 
     fun start(goal: String) {
         val trimmed = goal.trim()
-        if (trimmed.isEmpty()) return
+        if (trimmed.isEmpty() || core.running.value) return
         steps.value = emptyList()
         logs.value = emptyList()
+        perf.value = emptyList()
         viewModelScope.launch {
             runRowId = db.agentRunDao().insert(AgentRunEntity(goal = trimmed, phase = "PLANNING"))
             core.run(AgentTask(id = UUID.randomUUID().toString(), goal = trimmed))
         }
     }
+
+    /** Per-request cancellation (review #5): aborts at the next loop boundary. */
+    fun stop() = core.cancel()
 
     fun respond(approved: Boolean) = approval.respond(approved)
 
@@ -180,6 +201,7 @@ class ModelsViewModel : ViewModel() {
     private val models = ServiceLocator.models
     private val local = ServiceLocator.localEngine
     private val settings = ServiceLocator.settings
+    private val agent = ServiceLocator.agentCore
 
     val catalog = com.tibatech.gptmax.data.repo.ModelCatalog.entries
 
@@ -212,6 +234,10 @@ class ModelsViewModel : ViewModel() {
     }
 
     fun load(file: File) {
+        if (agent.running.value) {
+            engineError.value = "cannot swap models: the agent is running"
+            return
+        }
         viewModelScope.launch {
             val s: GpTMaxSettings = settings.snapshot()
             val ok = local.load(file.absolutePath, s.nCtx, s.nThreads)
@@ -226,13 +252,23 @@ class ModelsViewModel : ViewModel() {
         }
     }
 
+    /** Review #3: refuse to unload while the agent holds the engine. */
     fun unload() {
+        if (agent.running.value) {
+            engineError.value = "cannot unload: the agent is running"
+            return
+        }
         local.unload()
         engineLoaded.value = false
         loadedModel.value = ""
     }
 
+    /** Review #3: refuse to delete the model file the agent is running on. */
     fun delete(file: File) {
+        if (agent.running.value) {
+            engineError.value = "cannot delete: the agent is running on this model"
+            return
+        }
         models.delete(file)
         refresh()
     }
