@@ -1,82 +1,73 @@
-# GpTMax
+# GpTMax — Local-first AI Coding Studio for Android
 
-**Local-first AI coding studio and Android-native inference platform.**
+<p align="center"><b>استوديو برمجة ذكي يعمل محلياً على هاتفك — بخصوصيتك الكاملة</b></p>
 
-GpTMax is being designed as an AI development environment inspired by modern agentic code editors: project explorer, code editor, integrated agent, controlled terminal/runtime, Git-aware changes, and build/test feedback—powered first by on-device GGUF inference on Android.
+---
 
-> **Current implementation:** Android app with local GGUF inference foundation, a coding-agent UI, selected-project SAF access, bounded local-model tool loop, file list/read/search/write/exact-replace tools, explicit write permission, and an allowlisted managed-process foundation. CI and physical-device validation are tracked separately; this does not yet equal full Cursor feature parity.
+## بالعربية
 
-## Product north star
+هذا هو التطبيق الكامل وفق **استراتيجية A+** من تقرير التطوير (Android local-first + جسر سحابي BYOK).
 
-Turn a natural-language engineering task into a **reviewable, validated change**:
+### ما الذي يعمل في هذا الإصدار؟
 
-1. Understand the request and inspect the repository.
-2. Build a relevant, permission-aware context.
-3. Plan a sequence of small, observable actions.
-4. Read and edit files inside a task workspace.
-5. Run approved tools, builds, and tests where the environment supports them.
-6. Diagnose failures and attempt bounded repairs.
-7. Review the resulting diff and validation evidence.
-8. Present the result for user approval; never silently publish or merge.
+| المكوّن | الحالة | الملفات |
+|---|---|---|
+| واجهة Compose كاملة (5 شاشات، RTL، عربي/إنجليزي) | جاهزة | `ui/` |
+| محرك استدلال محلي عبر JNI + llama.cpp (بث تدفقي، إيقاف تعاوني) | جاهزة | `cpp/gptmax_jni.cpp`، `bridge/` |
+| حلقة الوكيل: تخطيط → جمع سياق → تنفيذ → تحقق → بوابة موافقة بشرية | جاهزة | `core/agent/` |
+| جسر سحابي BYOK (متوافق OpenAI): GLM Coding Plan / DeepSeek / OpenRouter / Ollama | جاهزة | `core/router/CloudBridge.kt` |
+| موجّه المهام حسب الاستراتيجية (محلي للمحادثة، سحابي للتخطيط عند تفعيله) | جاهزة | `core/router/InferenceRouter.kt` |
+| أدوات الوكيل: list_dir / read_file / write_file / delete_file / grep / finish | جاهزة | `core/agent/ToolRegistry.kt` |
+| مساحة عمل SAF آمنة (مجلد مشروع واحد، بدون أذونات تخزين واسعة) | جاهزة | `data/repo/WorkspaceRepository.kt` |
+| كتالوج نماذج GGUF + مدير تنزيل مع تقدّم (Qwen2.5-Coder 0.5B→7B، SmolLM2) | جاهزة | `data/repo/ModelRepository.kt` |
+| تخزين Room (محادثات + عمليات الوكيل) وإعدادات DataStore | جاهزة | `data/db/`، `data/settings/` |
 
-## Product pillars
+### البدء السريع
 
-- **AI Code Studio:** editor, project explorer, search, tabs, diff, Git changes, and an agent workspace designed for Android.
-- **Agent Core:** task planner, context builder, tool router, execution controller, failure analyzer, reviewer, and task ledger.
-- **Local Inference:** GGUF loading and token generation through a pinned native backend, initially llama.cpp, behind a stable GpTMax inference interface.
-- **Integrated Runtime:** an application-owned terminal/process and tool layer. Termux is not a product dependency. Runtime capabilities must be verified on Android; unsupported or resource-heavy builds may use an optional, explicitly configured build worker.
-- **Code Intelligence:** ignore-aware file inventory, symbol-aware retrieval, semantic search, dependency relationships, and project decisions.
-- **Trust and evidence:** scoped permissions, task snapshots, cancellation, resource limits, visible diffs, and honest test status.
+1. افتح المجلد في Android Studio (Ladybug+) وانتظر مزامنة Gradle.
+2. أضف llama.cpp وفق `app/src/main/cpp/VENDOR.md` (أمر واحد).
+3. شغّل على جهاز arm64 (Android 8.0+).
+4. تبويب **النماذج** → نزّل `Qwen2.5-Coder-3B-Instruct Q4_K_M` (‎≈1.9GB) → **Load**.
+5. تبويب **الإعدادات** → اختر مجلد مشروع → (اختياري) أضف مفتاح BYOK للسحابة.
+6. جرّب المحادثة أو أنجز مهمة عبر تبويب **الوكيل** — كل كتابة ملف تمر عبر بوابة موافقتك.
 
-## Architecture and plan
+### خريطة الكود إلى خطة التطوير
 
-- [Product vision](docs/product-vision.md)
-- [System architecture](docs/architecture.md)
-- [Agent runtime, implementation, and limitations](docs/agent-runtime.md)
-- [M1 implementation notes](docs/m1-implementation.md)
-- [M1 physical-device validation runbook](docs/m1-device-validation.md)
-- [Android device compatibility](docs/device-compatibility.md)
-- [Roadmap](ROADMAP.md)
-- [Architecture decision records](docs/decision-records/)
-- [Quality gates](docs/quality-gates.md)
-- [Threat model](docs/threat-model.md)
+- **المرحلة P0–P1 (Studio الأساس)**: الواجهات + المحرر + المحرك المحلي — **منجزة هنا**.
+- **المرحلة P2 (Agent Core + BYOK)**: الحلقة الكاملة والجسر السحابي — **منجزة هنا**.
+- **المرحلة P3 (Runtime مستقل + أدوات متقدمة)**: تشغيل أوامر shell/اختبارات داخل sandbox — التمديد الطبيعي `ToolRegistry`.
+- **المرحلة P4 (RAG فهرسة الكود)**: استبدل `ContextBuilder.repoMap` بفهرس embeddings.
+- **المرحلة P5 (مختبر التكميم — LookAtMyQuant)**: توليد بناءات GGUF أذكى عبر مترجم `lookatmyquant` (انظر `docs/MODELS.md`).
 
-## Build locally
+---
 
-The current project uses JDK 17 and Gradle 8.9, with Android SDK 35, NDK 27.0.12077973, and CMake 3.22.1.
+## In English
 
-```bash
-gradle --no-daemon assembleDebug testDebugUnitTest
+Complete Android implementation of the **A+ strategy**: a local-first AI coding
+studio. Inference runs on-device through llama.cpp (JNI, arm64) with
+Qwen2.5-Coder GGUF quantized models; heavier planning/validation steps route
+through a **BYOK** cloud bridge (OpenAI-compatible: GLM Coding Plan, DeepSeek,
+OpenRouter, or an Ollama PC on your LAN). Every file write by the agent passes
+a human approval gate.
+
+```
+Jetpack Compose (Material 3, RTL, ar/en)
+        │
+   Agent loop: Plan → Context → Act → Validate → [approval gate]
+        │                              │
+ InferenceRouter ──────┬────── LocalEngine (JNI/llama.cpp, ChatML, GGUF Q4_K_M)
+                       └────── CloudBridge (BYOK, SSE streaming)
+        │
+ Room (chat + runs) · DataStore (keys/prefs) · SAF workspace
 ```
 
-Install the Android SDK components listed in `.github/workflows/android-build.yml` before building locally. A Gradle wrapper will be checked in once its wrapper JAR is generated and validated; do not rely on a globally installed Gradle for a future release.
+Build: open in Android Studio, vendor llama.cpp (one command, see
+`app/src/main/cpp/VENDOR.md`), run on an arm64 device (Android 8+).
+**No local toolchain?** Push to GitHub — the bundled workflow
+(`.github/workflows/build.yml`) vendors llama.cpp, builds the arm64 debug
+APK and uploads it as a downloadable artifact on every push.
+Model catalog and quantization guidance (including the LookAtMyQuant
+compiler path) live in `docs/MODELS.md`.
 
-## Inference and optimization
-
-M1 includes a native generation path that applies a model-embedded GGUF chat template when available, tokenizes the formatted prompt, evaluates it, samples tokens, streams decoded text to Compose, and accepts cancellation requests. The app includes a verified-import flow for the official Qwen2.5-0.5B-Instruct Q4_K_M smoke-test model; model weights remain external to the APK. Follow the [physical-device validation runbook](docs/m1-device-validation.md). The code must still be exercised with the model on physical devices. The coding-agent layer now routes structured local-model actions through a bounded tool registry and supports scoped file operations in a user-selected SAF project folder; see the agent runtime document for limitations. Model optimization and LookAtMyQuant-inspired quantization research remain a separate, measured track after a stable baseline exists. MLX-specific runtime code is not an Android backend and will not be transplanted directly.
-
-## Platform principles
-
-- Kotlin / Jetpack Compose for Android UI and lifecycle.
-- C++ / Android NDK / CMake for native inference.
-- A small JNI boundary and a stable internal inference API.
-- SAF/document-provider access for user-selected projects and model files.
-- App-private workspace by default; explicit permission for broader access.
-- No model weights committed to this repository.
-- No arbitrary unrestricted shell execution by the model.
-- No claim of GPU support, universal model compatibility, or performance until verified.
-
-## Engineering governance
-
-- [Contributing guide](CONTRIBUTING.md)
-- [Security policy](SECURITY.md)
-- [Dependency and supply-chain policy](DEPENDENCY_POLICY.md)
-- [Threat model](docs/threat-model.md)
-- [Quality gates](docs/quality-gates.md)
-- [Support](SUPPORT.md)
-
-Repository CI checks documentation and repository hygiene. Android CI assembles the debug app and runs unit tests; neither workflow proves local inference, agent behavior, or device performance.
-
-## License
-
-GpTMax project materials are licensed under the MIT License unless a file or third-party component states otherwise. Third-party code, model weights, tokenizer assets, and datasets retain their own licenses. See [LICENSE](LICENSE).
+License: MIT. The llama.cpp dependency keeps its own MIT license; base model
+licenses apply to each GGUF you ship.
