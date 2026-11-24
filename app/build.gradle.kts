@@ -17,10 +17,19 @@ android {
         versionCode = 1
         versionName = "0.1.0-alpha"
 
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
         ndk {
-            // Local-first strategy: arm64-v8a only (per development plan).
+            // Local-first strategy: arm64-v8a by default (per development plan).
             // llama.cpp delivers its best throughput on arm64 via dotprod/i8mm.
-            abiFilters += listOf("arm64-v8a")
+            // Fix #4: the CI emulator gate overrides this via
+            // -Pgptmax.abiFilters=arm64-v8a,x86_64 because hosted emulators
+            // run on x86_64 hosts.
+            val abiOverride = (project.findProperty("gptmax.abiFilters") as String?)
+                ?.split(",")
+                ?.map { it.trim() }
+                ?.filter { it.isNotBlank() }
+            abiFilters += abiOverride ?: listOf("arm64-v8a")
         }
 
         externalNativeBuild {
@@ -29,8 +38,6 @@ android {
                 cppFlags += listOf("-O3")
             }
         }
-
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     externalNativeBuild {
