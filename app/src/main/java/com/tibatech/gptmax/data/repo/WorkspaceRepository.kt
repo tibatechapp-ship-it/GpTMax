@@ -16,7 +16,10 @@ import kotlinx.coroutines.withContext
  * project folder (ACTION_OPEN_DOCUMENT_TREE) and every agent tool operates
  * on relative paths inside it. No broad storage permission is requested.
  *
- * Review #1: grep never scans sensitive paths (.aws, .ssh, .env*, secrets…).
+ * Review #1: sensitive paths (.aws, .ssh, .env*, keystores, secrets dirs)
+ * are filtered at the source — listings hide them, reads refuse them and
+ * grep never descends into them — so ContextBuilder, the editor UI and the
+ * tool layer all inherit ONE policy instead of three divergent ones.
  */
 class WorkspaceRepository(private val context: Context) : WorkspaceOps {
 
@@ -42,11 +45,13 @@ class WorkspaceRepository(private val context: Context) : WorkspaceOps {
         dir.listFiles()
             .filter { it.name != null }
             .map { FileNode(it.name ?: "", join(dirPath, it.name ?: ""), it.isDirectory) }
+            .filter { !SensitivePaths.isSensitive(it.path) }
             .sortedWith(compareByDescending<FileNode> { it.isDir }.thenBy { it.name })
     }
 
     // ------------------------------------------------------------------ read
     override suspend fun read(path: String): String? = withContext(Dispatchers.IO) {
+        if (SensitivePaths.isSensitive(path)) return@withContext null
         val file = resolve(path) ?: return@withContext null
         if (!file.isFile || !file.canRead()) return@withContext null
         context.contentResolver.openInputStream(file.uri)?.use { stream ->
