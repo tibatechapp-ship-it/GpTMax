@@ -22,6 +22,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The vendored llama.cpp tree is git-ignored by design (see
+      # app/src/main/cpp/VENDOR.md), so it must be materialized on the runner
+      # before Gradle/CMake runs, or add_subdirectory(llama.cpp) fails.
+      - name: Vendor pinned llama.cpp (1fb8a26)
+        run: |
+          set -euo pipefail
+          LLAMA_PIN="1fb8a269603b497fc1ce7dab2f2fc5c1be7a51cb"
+          DEST="app/src/main/cpp/llama.cpp"
+          rm -rf "$DEST"
+          mkdir -p "$DEST"
+          curl -fsSL "https://github.com/ggml-org/llama.cpp/archive/${LLAMA_PIN}.tar.gz" -o /tmp/llama-pin.tar.gz
+          tar -xzf /tmp/llama-pin.tar.gz -C "$DEST" --strip-components=1
+          test -f "$DEST/CMakeLists.txt"
+          test -f "$DEST/include/llama.h"
+          test -f "$DEST/src/llama.cpp"
+          echo "vendored llama.cpp @ ${LLAMA_PIN}"
+
       - name: Set up JDK 17
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
@@ -87,6 +104,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Same vendoring requirement as the android job.
+      - name: Vendor pinned llama.cpp (1fb8a26)
+        run: |
+          set -euo pipefail
+          LLAMA_PIN="1fb8a269603b497fc1ce7dab2f2fc5c1be7a51cb"
+          DEST="app/src/main/cpp/llama.cpp"
+          rm -rf "$DEST"
+          mkdir -p "$DEST"
+          curl -fsSL "https://github.com/ggml-org/llama.cpp/archive/${LLAMA_PIN}.tar.gz" -o /tmp/llama-pin.tar.gz
+          tar -xzf /tmp/llama-pin.tar.gz -C "$DEST" --strip-components=1
+          test -f "$DEST/CMakeLists.txt"
+          test -f "$DEST/include/llama.h"
+          test -f "$DEST/src/llama.cpp"
+          echo "vendored llama.cpp @ ${LLAMA_PIN}"
+
       - name: Set up JDK 17
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
@@ -127,6 +159,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Same vendoring requirement as the android job.
+      - name: Vendor pinned llama.cpp (1fb8a26)
+        run: |
+          set -euo pipefail
+          LLAMA_PIN="1fb8a269603b497fc1ce7dab2f2fc5c1be7a51cb"
+          DEST="app/src/main/cpp/llama.cpp"
+          rm -rf "$DEST"
+          mkdir -p "$DEST"
+          curl -fsSL "https://github.com/ggml-org/llama.cpp/archive/${LLAMA_PIN}.tar.gz" -o /tmp/llama-pin.tar.gz
+          tar -xzf /tmp/llama-pin.tar.gz -C "$DEST" --strip-components=1
+          test -f "$DEST/CMakeLists.txt"
+          test -f "$DEST/include/llama.h"
+          test -f "$DEST/src/llama.cpp"
+          echo "vendored llama.cpp @ ${LLAMA_PIN}"
 
       - name: Set up JDK 17
         uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
