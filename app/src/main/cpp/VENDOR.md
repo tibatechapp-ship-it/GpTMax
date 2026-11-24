@@ -10,14 +10,17 @@ It is git-ignored on purpose: pin one upstream commit so the JNI layer below
 keeps compiling against a stable API surface. The tree is **not** a submodule —
 it is materialized from the pinned-commit tarball.
 
-## Automatic vendoring (CI)
+## Automatic vendoring (Gradle build)
 
-`.github/workflows/android-build.yml` vendors the pin automatically: every
-Gradle job (android / release / device) downloads the pinned-commit tarball
-right after checkout, unpacks it into `app/src/main/cpp/llama.cpp`, and
-sanity-checks `CMakeLists.txt` + `include/llama.h` before Gradle runs.
+The `vendorLlamaCpp` task in `app/build.gradle.kts` materializes the pin
+automatically: every native (CMake) build task — locally and in every Gradle
+CI job — depends on it, so the pinned-commit tarball is downloaded and
+unpacked into `app/src/main/cpp/llama.cpp`, with `CMakeLists.txt` +
+`include/llama.h` sanity-checked, before `add_subdirectory(llama.cpp)` runs.
+Pure-Gradle tasks (unit tests, lint) never trigger the download, and the
+task is up-to-date once the tree exists — delete it to re-vendor.
 
-## Steps (local)
+## Steps (local, manual alternative)
 
 ```bash
 git clone https://github.com/ggml-org/llama.cpp app/src/main/cpp/llama.cpp
@@ -27,8 +30,8 @@ git -C app/src/main/cpp/llama.cpp checkout 1fb8a26
 ## Recommended pin
 
 **Verified pin: `1fb8a26` (ggml-org/llama.cpp master, 2026-11-22 — commit
-"opencl: add coopmat GEMM for Adreno 850").** This is the commit
-`.github/workflows/android-build.yml` vendors automatically.
+"opencl: add coopmat GEMM for Adreno 850").** This is the commit the
+`vendorLlamaCpp` task in `app/build.gradle.kts` vendors automatically.
 
 The JNI bridge in `gptmax_jni.cpp` is written against this API surface:
 
@@ -45,8 +48,8 @@ The JNI bridge in `gptmax_jni.cpp` is written against this API surface:
 - `llama_token_to_piece(vocab, token, buf, len, lstrip, special)`
   (the pin has no `llama_vocab_token_to_piece`)
 
-After changing the pin, rebuild and run `nativeIsLoaded()` smoke test before
-releasing.
+After changing the pin, delete `app/src/main/cpp/llama.cpp`, rebuild and run
+the `nativeIsLoaded()` smoke test before releasing.
 
 ## CMake knobs
 
