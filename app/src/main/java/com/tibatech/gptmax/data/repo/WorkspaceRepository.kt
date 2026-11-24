@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import com.tibatech.gptmax.core.agent.WorkspaceOps
+import com.tibatech.gptmax.core.guardrails.PathGuard
 import com.tibatech.gptmax.core.guardrails.SensitivePaths
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,6 +21,10 @@ import kotlinx.coroutines.withContext
  * are filtered at the source — listings hide them, reads refuse them and
  * grep never descends into them — so ContextBuilder, the editor UI and the
  * tool layer all inherit ONE policy instead of three divergent ones.
+ * Review #1 hardening: writes and deletes refuse them too. This repository
+ * is the single choke point — the editor UI saves straight through here,
+ * so a stale UI state can never touch credential material even though the
+ * ToolRegistry already guards its own tool calls.
  */
 class WorkspaceRepository(private val context: Context) : WorkspaceOps {
 
@@ -61,6 +66,13 @@ class WorkspaceRepository(private val context: Context) : WorkspaceOps {
 
     // ----------------------------------------------------------------- write
     override suspend fun write(path: String, content: String): Boolean = withContext(Dispatchers.IO) {
+        // Choke-point guards: path containment, credential read-exclusion and
+        // irreversible key/credential write-protection all apply here, so the
+        // editor UI and any future direct caller inherit the same policy as
+        // the agent's write_file tool.
+        if (!PathGuard.isAllowed(path)) return@withContext false
+        if (SensitivePaths.isSensitive(path)) return@withContext false
+        if (SensitivePaths.isProtectedFromWrite(path)) return@withContext false
         runCatching {
             val (parent, name) = splitParent(path)
             val parentDir = ensureDir(parent) ?: return@runCatching false
@@ -74,6 +86,11 @@ class WorkspaceRepository(private val context: Context) : WorkspaceOps {
 
     // ---------------------------------------------------------------- delete
     override suspend fun delete(path: String): Boolean = withContext(Dispatchers.IO) {
+        // Same choke-point guards as write: nothing outside the workspace,
+        // nothing sensitive, nothing that is irreversible key material.
+        if (!PathGuard.isAllowed(path)) return@withContext false
+        if (SensitivePaths.isSensitive(path)) return@withContext false
+        if (SensitivePaths.isProtectedFromWrite(path)) return@withContext false
         runCatching { resolve(path)?.delete() }.getOrDefault(false)
     }
 
