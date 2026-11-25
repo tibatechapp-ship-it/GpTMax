@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -14,6 +15,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -30,6 +32,10 @@ fun EditorScreen(viewModel: EditorViewModel = androidx.lifecycle.viewmodel.compo
     val content by viewModel.content.collectAsState()
     val dirty by viewModel.dirty.collectAsState()
     val hasRoot by viewModel.hasRoot.collectAsState()
+    // Phase 6 (external review): save failures MUST be visible — a silent
+    // failure made a lost edit look saved.
+    val saveError by viewModel.saveError.collectAsState()
+    val saving by viewModel.saving.collectAsState()
 
     Column(modifier = Modifier.fillMaxSize().imePadding()) {
         if (!hasRoot) {
@@ -54,9 +60,31 @@ fun EditorScreen(viewModel: EditorViewModel = androidx.lifecycle.viewmodel.compo
                 modifier = Modifier.weight(1f),
             )
             if (openFile.isNotBlank()) {
-                Button(onClick = { viewModel.save() }, enabled = dirty) {
+                if (saving) {
+                    CircularProgressIndicator(modifier = Modifier.padding(6.dp).height(24.dp))
+                }
+                Button(onClick = { viewModel.save() }, enabled = dirty && !saving) {
                     Text(if (dirty) "Save" else "Saved")
                 }
+            }
+        }
+
+        // Phase 6: explicit, dismissible failure banner — the unsaved flag
+        // stays true until the user saves successfully.
+        if (saveError.isNotBlank()) {
+            Card(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp).fillMaxWidth(),
+                colors = androidx.compose.material3.CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                ),
+                onClick = { viewModel.dismissSaveError() },
+            ) {
+                Text(
+                    "SAVE FAILED: $saveError (tap to dismiss)",
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(10.dp),
+                )
             }
         }
 
