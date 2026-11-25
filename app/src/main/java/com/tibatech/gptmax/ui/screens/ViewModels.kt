@@ -6,10 +6,12 @@ import com.tibatech.gptmax.core.agent.AgentEvent
 import com.tibatech.gptmax.core.agent.AgentPhase
 import com.tibatech.gptmax.core.agent.AgentStep
 import com.tibatech.gptmax.core.agent.AgentTask
+import com.tibatech.gptmax.core.agent.CompletionStatus
 import com.tibatech.gptmax.core.agent.ResumableRun
 import com.tibatech.gptmax.core.agent.SaveTransaction
 import com.tibatech.gptmax.core.agent.SessionPinner
 import com.tibatech.gptmax.core.agent.toAgentSteps
+import com.tibatech.gptmax.core.agent.toPhase
 import com.tibatech.gptmax.core.guardrails.InferenceSafety
 import com.tibatech.gptmax.core.prompts.PromptTemplates
 import com.tibatech.gptmax.core.router.ChatMessage
@@ -80,11 +82,15 @@ class ChatViewModel : ViewModel() {
         streamJob = viewModelScope.launch {
             _streaming.value = true
             _streamText.value = ""
+            // Phase 6 (external review): the history is read from the DB for
+            // the CURRENT session BEFORE the new user message is inserted —
+            // the UI flow may still hold the previous project's messages
+            // right after a switch, and a stale flow value could leak that
+            // thread into the new project's request.
+            val history = db.messageDao().history(sid, 20)
+                .reversed()
+                .map { ChatMessage(role = it.role, content = it.content) }
             db.messageDao().insert(MessageEntity(sessionId = sid, role = "user", content = trimmed))
-
-            val history = messages.value.takeLast(20).map {
-                ChatMessage(role = it.role, content = it.content)
-            }
             val client = router.forTask(com.tibatech.gptmax.core.router.TaskKind.CHAT)
             _badge.value = client.source
 
@@ -187,11 +193,19 @@ class AgentViewModel : ViewModel() {
                         "resumed: ${e.fromStep}/${e.totalSteps} steps already done",
                     )
                     is AgentEvent.Completed -> {
-                        appendLog("completed: ${e.summary}")
-                        resumable.value = null // phase 3: done — snapshot cleared
+                        // Phase 5: the outcome is honest — log the status so
+                        // "partial"/"blocked"/"unverified" never read as success.
+                        appendLog(
+                            "completed (${e.status.name.lowercase().replace('_', ' ')}): ${e.summary}",
+                        )
+                        // Phase 5 resumability policy: only DONE drops the
+                        // snapshot; PARTIAL/BLOCKED/VERIFY_FAILED runs stay
+                        // resumable for an exact-boundary retry.
+                        resumable.value =
+                            if (e.status == CompletionStatus.DONE) null else resumeStore.load()
                         if (runRowId != 0L) {
                             db.agentRunDao().finish(
-                                runRowId, AgentPhase.DONE.name, e.summary,
+                                runRowId, e.status.toPhase().name, e.summary,
                                 System.currentTimeMillis(),
                             )
                         }
@@ -419,6 +433,9 @@ class EditorViewModel : ViewModel() {
     val saving = MutableStateFlow(false)
     val saveError = MutableStateFlow("")
 
+    /** Phase 6: bumped on every keystroke — binds a save to its text version. */
+    private var editGeneration = 0L
+
     val hasRoot: StateFlow<Boolean> =
         workspace.root.map { it != null }
             .stateIn(viewModelScope, SharingStarted.Eagerly, workspace.root.value != null)
@@ -442,24 +459,53 @@ class EditorViewModel : ViewModel() {
     fun onContentChange(value: String) {
         content.value = value
         dirty.value = true
+        editGeneration += 1
     }
 
+    /**
+     * Phase 6 (external review, stale-save race): the save is bound to the
+     * EXACT text generation and workspace it started on.
+     * - a save finishing over NEWER edits keeps the unsaved flag (the older
+     *   bytes landed; the newer edits are still not on disk);
+     * - a workspace switch mid-save is surfaced as an error instead of
+     *   silently clearing the flag for the wrong project;
+     * - a failed save keeps the flag and the error is shown (EditorScreen).
+     */
     fun save() {
         val path = openFile.value
         if (path.isBlank() || saving.value) return
+        val textAtCall = content.value
+        val generationAtCall = editGeneration
+        val rootAtCall = workspace.root.value?.uri?.toString()
         viewModelScope.launch {
             saving.value = true
             saveError.value = ""
-            val outcome = saveTransaction.save(path, content.value)
+            val outcome = saveTransaction.save(path, textAtCall)
             saving.value = false
-            if (outcome.confirmed) {
-                dirty.value = false
-            } else {
-                // The unsaved flag stays TRUE: the user's edits are not on
-                // disk yet, and the reason is surfaced instead of swallowed.
-                saveError.value = outcome.error
+            val rootNow = workspace.root.value?.uri?.toString()
+            when {
+                rootNow != rootAtCall -> {
+                    dirty.value = true
+                    saveError.value = "workspace changed during save — re-open the file in the new project and save again"
+                }
+                outcome.confirmed && editGeneration == generationAtCall -> dirty.value = false
+                outcome.confirmed -> {
+                    // Older text landed, but newer edits exist — they remain unsaved.
+                    dirty.value = true
+                }
+                else -> {
+                    // The unsaved flag stays TRUE: the user's edits are not on
+                    // disk yet, and the reason is surfaced instead of swallowed.
+                    dirty.value = true
+                    saveError.value = outcome.error
+                }
             }
         }
+    }
+
+    /** Phase 6: the user acknowledged the save failure banner. */
+    fun dismissSaveError() {
+        saveError.value = ""
     }
 
     private suspend fun collectFiles(maxDepth: Int): List<WorkspaceRepository.FileNode> {

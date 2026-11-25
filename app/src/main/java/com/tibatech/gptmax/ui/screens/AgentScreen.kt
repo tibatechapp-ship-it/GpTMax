@@ -75,7 +75,9 @@ fun AgentScreen(viewModel: AgentViewModel = androidx.lifecycle.viewmodel.compose
                     viewModel.start(goal)
                     goal = ""
                 },
-                enabled = phase == AgentPhase.IDLE || phase == AgentPhase.DONE || phase == AgentPhase.FAILED,
+                enabled = phase == AgentPhase.IDLE || phase == AgentPhase.DONE ||
+                    phase == AgentPhase.FAILED || phase == AgentPhase.PARTIAL ||
+                    phase == AgentPhase.BLOCKED || phase == AgentPhase.VERIFY_FAILED,
             ) { Text("Run") }
             // Review #5: a visible Stop control wired to per-request cancellation.
             OutlinedButton(
@@ -198,6 +200,12 @@ private fun PhaseChip(phase: AgentPhase) {
         AgentPhase.DONE -> Color(0xFF66BB6A)
         AgentPhase.FAILED -> MaterialTheme.colorScheme.error
         AgentPhase.IDLE -> MaterialTheme.colorScheme.onSurfaceVariant
+        // Phase 5 (M5 honest outcomes): non-success terminal states are
+        // visually distinct from DONE — amber for partial/unverified, red
+        // for blocked and verification-failed.
+        AgentPhase.PARTIAL -> Color(0xFFFFB74D)
+        AgentPhase.BLOCKED -> Color(0xFFE57373)
+        AgentPhase.VERIFY_FAILED -> Color(0xFFFFA726)
         else -> MaterialTheme.colorScheme.primary
     }
     Text(
