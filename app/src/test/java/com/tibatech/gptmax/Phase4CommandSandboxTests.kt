@@ -45,7 +45,10 @@ class Phase4CommandSandboxTests {
         assertNull("pwd must not hang", r.drainError)
         assertEquals(0, r.exitCode)
         val out = r.output.trim()
-        assertTrue("pwd output '$out' must live under ${root.absolutePath}", out.startsWith(root.absolutePath))
+        // getcwd() prints the physical path; canonicalize the root too so
+        // a symlinked TMPDIR (macOS /tmp, CI bind-mounts) cannot fool us.
+        val expected = root.canonicalPath
+        assertTrue("pwd output '$out' must live under $expected", out.startsWith(expected))
         assertTrue("scratch dir must be per-run ('run-…'): $out", out.contains(File.separatorChar + "run-"))
     }
 

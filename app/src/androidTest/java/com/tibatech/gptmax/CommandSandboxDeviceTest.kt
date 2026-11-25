@@ -90,7 +90,11 @@ class CommandSandboxDeviceTest {
         assertNull("pwd must not fail on device", r.drainError)
         assertEquals(0, r.exitCode)
         val out = r.output.trim()
-        assertTrue("pwd '$out' must live under ${root.absolutePath}", out.startsWith(root.absolutePath))
+        // getcwd() prints the PHYSICAL path with symlinks resolved, and on
+        // Android /data/data/<pkg> is a symlink of /data/user/0/<pkg> while
+        // context.cacheDir spells the latter — compare canonicalized.
+        val expected = root.canonicalPath
+        assertTrue("pwd '$out' must live under $expected", out.startsWith(expected))
         assertTrue("per-run scratch naming missing: $out", out.contains("/run-"))
     }
 
