@@ -9,6 +9,12 @@ data class AgentTask(
     val id: String,
     val goal: String,
     val createdAt: Long = System.currentTimeMillis(),
+    /**
+     * Phase 3 (resumability): the workspace the run is pinned to. Persisted
+     * with the resume snapshot so a later resume refuses a DIFFERENT
+     * project instead of replaying steps against the wrong files.
+     */
+    val workspaceUri: String? = null,
 )
 
 /** One planned action. [isWrite] marks steps that hit the approval gate. */
@@ -35,6 +41,12 @@ sealed class AgentEvent {
 
     /** Perf measurement (review #6): phase/tool durations in milliseconds. */
     data class Metrics(val label: String, val millis: Long) : AgentEvent()
+
+    /**
+     * Phase 3 (resumability): a run resumed from a persisted snapshot.
+     * [fromStep] counts the steps already completed, [totalSteps] the plan.
+     */
+    data class Resumed(val fromStep: Int, val totalSteps: Int) : AgentEvent()
 
     data class Completed(val summary: String, val source: String) : AgentEvent()
     data class Failed(val error: String) : AgentEvent()

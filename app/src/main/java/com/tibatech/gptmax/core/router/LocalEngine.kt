@@ -2,6 +2,7 @@ package com.tibatech.gptmax.core.router
 
 import com.tibatech.gptmax.bridge.LlamaBridge
 import com.tibatech.gptmax.bridge.OnTokenListener
+import com.tibatech.gptmax.core.guardrails.InferenceSafety
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -13,6 +14,13 @@ import kotlinx.coroutines.withTimeout
  *
  * Prompt formatting uses ChatML, which matches Qwen2.5-Coder / Qwen3 chat
  * templates — the default local coder models for GpTMax.
+ *
+ * Phase 2 (external review, inference safety): rendered prompts above
+ * [InferenceSafety.MAX_PROMPT_CHARS] are refused before they reach the
+ * native engine (a giant prompt would pin the phone's memory for minutes),
+ * sampling parameters are clamped, and the not-loaded failure now carries
+ * the typed [InferenceSafety.FAILURE_PREFIX] marker so the router can
+ * fall back to the cloud bridge.
  */
 class LocalEngine(
     private val defaultMaxTokens: Int = 1024,
@@ -54,13 +62,26 @@ class LocalEngine(
         withContext(Dispatchers.Default) {
             if (!isLoaded) {
                 return@withContext LlmResult(
-                    text = "[local engine not loaded — download a GGUF model in Models]",
+                    text = InferenceSafety.failure(
+                        "local engine not loaded — download a GGUF model in Models",
+                    ),
                     source = Source.LOCAL,
                 )
             }
             val prompt = ChatML.render(request.messages)
-            val maxTokens = request.maxTokens ?: defaultMaxTokens
-            val temperature = request.temperature ?: 0.2f
+            if (InferenceSafety.promptTooLarge(prompt)) {
+                return@withContext LlmResult(
+                    text = InferenceSafety.failure(
+                        "prompt too large for the local engine " +
+                            "(${prompt.length} > ${InferenceSafety.MAX_PROMPT_CHARS} chars)",
+                    ),
+                    source = Source.LOCAL,
+                )
+            }
+            val maxTokens = InferenceSafety.clampMaxTokens(request.maxTokens ?: defaultMaxTokens)
+                ?: defaultMaxTokens
+            val temperature = InferenceSafety.clampTemperature(request.temperature ?: 0.2f)
+                ?: 0.2f
 
             val text = generationMutex.withLock {
                 withTimeout(GENERATION_TIMEOUT_MS) {

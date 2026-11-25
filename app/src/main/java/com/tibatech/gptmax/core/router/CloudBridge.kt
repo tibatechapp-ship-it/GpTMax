@@ -14,6 +14,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import com.tibatech.gptmax.core.guardrails.InferenceSafety
 import java.io.BufferedReader
 import java.util.concurrent.TimeUnit
 
@@ -26,6 +27,13 @@ import java.util.concurrent.TimeUnit
  *
  * The key never leaves the device: it lives in DataStore and is attached
  * per-request.
+ *
+ * Phase 2 (external review, inference safety): the SSE loop now has a hard
+ * output cap and a total-stream deadline — a provider that streams forever
+ * or sends gigabytes could previously OOM the app. Endpoints that would
+ * carry an API key must be https://. Temperatures / max_tokens are clamped
+ * and every failure returns the typed [InferenceSafety.FAILURE_PREFIX]
+ * marker instead of an error string that looks like a model answer.
  */
 class CloudBridge(
     private val configProvider: suspend () -> ProviderConfig,
@@ -46,7 +54,16 @@ class CloudBridge(
             val config = configProvider()
             if (config.apiKey.isBlank() && !config.allowMissingKey) {
                 return@withContext LlmResult(
-                    text = "[cloud bridge not configured — add an API key in Settings]",
+                    text = InferenceSafety.failure(
+                        "cloud bridge not configured — add an API key in Settings",
+                    ),
+                    source = Source.CLOUD,
+                )
+            }
+            val endpoint = InferenceSafety.validateEndpoint(config.baseUrl, config.allowMissingKey)
+            if (endpoint != null) {
+                return@withContext LlmResult(
+                    text = InferenceSafety.failure(endpoint),
                     source = Source.CLOUD,
                 )
             }
@@ -54,10 +71,14 @@ class CloudBridge(
             val body = buildJsonObject {
                 put("model", config.model)
                 put("stream", true)
-                put("temperature", request.temperature ?: config.temperature.toDouble())
+                put(
+                    "temperature",
+                    InferenceSafety.clampTemperature(request.temperature ?: config.temperature)
+                        ?.toDouble() ?: 0.2,
+                )
                 put(
                     "max_tokens",
-                    request.maxTokens ?: config.maxTokens,
+                    InferenceSafety.clampMaxTokens(request.maxTokens ?: config.maxTokens) ?: 8192,
                 )
                 put("messages", json.encodeToJsonElement(request.messages.map {
                     buildJsonObject {
@@ -77,27 +98,59 @@ class CloudBridge(
             val sb = StringBuilder()
             client.newCall(httpRequest).execute().use { response ->
                 if (!response.isSuccessful) {
-                    val err = response.body?.string()?.take(400).orEmpty()
+                    val err = InferenceSafety.sanitize(
+                        response.body?.string().orEmpty(),
+                        MAX_ERROR_CHARS,
+                    )
                     return@withContext LlmResult(
-                        text = "[cloud error ${response.code}] $err",
+                        text = InferenceSafety.failure("cloud HTTP ${response.code}: $err"),
                         source = Source.CLOUD,
                     )
                 }
                 val reader: BufferedReader = response.body?.charStream()?.buffered()
                     ?: return@withContext LlmResult(text = sb.toString(), source = Source.CLOUD)
 
-                reader.forEachLine { line ->
+                // Phase 2: bounded drain — a total-stream deadline plus a hard
+                // character cap. readTimeout bounds a single stalled read; the
+                // deadline below bounds the WHOLE stream so a provider that
+                // dribbles keepalive lines forever cannot hold the app hostage.
+                val deadline = System.nanoTime() + STREAM_DEADLINE_NANOS
+                var timedOut = false
+                var capped = false
+                while (true) {
+                    val line = reader.readLine() ?: break
+                    if (System.nanoTime() > deadline) {
+                        timedOut = true
+                        break
+                    }
                     val payload = line.removePrefix("data: ").trim()
                     when {
-                        line.startsWith("data:") && payload == "[DONE]" -> return@forEachLine
+                        line.startsWith("data:") && payload == "[DONE]" -> break
                         line.startsWith("data:") -> {
                             val delta = extractDelta(payload)
-                            if (delta.isNotEmpty()) {
+                            if (delta.isNotEmpty() && sb.length < InferenceSafety.MAX_OUTPUT_CHARS) {
                                 sb.append(delta)
                                 onDelta(delta)
                             }
+                            if (sb.length >= InferenceSafety.MAX_OUTPUT_CHARS && !capped) {
+                                capped = true
+                                val marker = "[output truncated at " +
+                                    InferenceSafety.MAX_OUTPUT_CHARS + " chars]"
+                                sb.append('\n').append(marker)
+                                onDelta("\n$marker")
+                                break
+                            }
                         }
                     }
+                }
+                if (timedOut) {
+                    return@withContext LlmResult(
+                        text = InferenceSafety.failure(
+                            "cloud stream exceeded the total deadline " +
+                                "(${STREAM_DEADLINE_MINUTES} min) — provider stalled",
+                        ),
+                        source = Source.CLOUD,
+                    )
                 }
             }
             LlmResult(text = sb.toString(), source = Source.CLOUD)
@@ -136,6 +189,11 @@ class CloudBridge(
                 allowMissingKey = true,
             ),
         )
+
+        /** Phase 2: caps and deadlines for the SSE drain. */
+        const val STREAM_DEADLINE_MINUTES = 6L
+        const val STREAM_DEADLINE_NANOS = STREAM_DEADLINE_MINUTES * 60 * 1_000_000_000L
+        const val MAX_ERROR_CHARS = 400
     }
 }
 

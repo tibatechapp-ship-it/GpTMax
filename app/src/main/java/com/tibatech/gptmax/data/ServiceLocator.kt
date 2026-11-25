@@ -3,6 +3,7 @@ package com.tibatech.gptmax.data
 import android.content.Context
 import com.tibatech.gptmax.core.agent.AgentCore
 import com.tibatech.gptmax.core.agent.PerformanceMonitor
+import com.tibatech.gptmax.core.agent.RunResumeStore
 import com.tibatech.gptmax.core.agent.ToolRegistry
 import com.tibatech.gptmax.core.context.ContextBuilder
 import com.tibatech.gptmax.core.guardrails.ApprovalGate
@@ -13,6 +14,7 @@ import com.tibatech.gptmax.data.db.AppDatabase
 import com.tibatech.gptmax.data.repo.ModelRepository
 import com.tibatech.gptmax.data.repo.WorkspaceRepository
 import com.tibatech.gptmax.data.settings.SettingsStore
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -46,6 +48,10 @@ object ServiceLocator {
     lateinit var agentCore: AgentCore
         private set
 
+    /** Phase 3: file-backed resume snapshot store for interrupted agent runs. */
+    lateinit var resumeStore: RunResumeStore
+        private set
+
     fun init(context: Context) {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         settings = SettingsStore(context.applicationContext)
@@ -54,13 +60,21 @@ object ServiceLocator {
         models = ModelRepository(context.applicationContext)
         localEngine = LocalEngine()
         cloudBridge = CloudBridge(configProvider = { settings.snapshot().provider })
-        router = InferenceRouter(settings, localEngine, cloudBridge)
+        // Phase 2: the router takes a snapshot PROVIDER (not the Android
+        // DataStore object) so the whole routing layer is JVM-testable.
+        router = InferenceRouter(
+            settingsSnapshot = { settings.snapshot() },
+            local = localEngine,
+            cloud = cloudBridge,
+        )
         approvalGate = ApprovalGate(autoApprove = {
             runCatching { settings.snapshot().autoApproveWrites }.getOrDefault(false)
         })
         // Review #6: one shared performance monitor feeds tool timing stats,
         // and the app sandbox dir backs the isolated run_command scratch space.
         performance = PerformanceMonitor()
+        // Phase 3: the resume snapshot lives in the app-private files dir.
+        resumeStore = RunResumeStore(File(context.applicationContext.filesDir, "agent-resume"))
         agentCore = AgentCore(
             router = router,
             tools = ToolRegistry(
@@ -70,6 +84,7 @@ object ServiceLocator {
             ),
             context = ContextBuilder(workspace),
             approval = approvalGate,
+            resumeStore = resumeStore,
         )
     }
 }

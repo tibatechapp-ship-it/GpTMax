@@ -3,6 +3,7 @@ package com.tibatech.gptmax.core.agent
 import com.tibatech.gptmax.core.context.ContextBudget
 import com.tibatech.gptmax.core.context.ContextBuilder
 import com.tibatech.gptmax.core.guardrails.ApprovalGate
+import com.tibatech.gptmax.core.guardrails.InferenceSafety
 import com.tibatech.gptmax.core.prompts.PromptTemplates
 import com.tibatech.gptmax.core.router.InferenceRouter
 import com.tibatech.gptmax.core.router.LlmRequest
@@ -35,12 +36,26 @@ import kotlinx.serialization.json.jsonPrimitive
  * Review #6: phases and tool calls are timed and emitted as Metrics events,
  * the plan is bounded to [MAX_STEPS] to cap agent autonomy, and run_command
  * previews show the sandboxed command before the user approves it.
+ *
+ * Phase 2 (external review, inference safety): planning and validation now
+ * go through [InferenceRouter.completeWithFallback] — a typed client failure
+ * ("cloud error", "engine not loaded") is retried once on the other source
+ * instead of being parsed as a model answer, and review text is sanitized
+ * before it reaches the log/UI.
+ *
+ * Phase 3 (external review, resumability): when a [RunResumeStore] is wired,
+ * the plan and every step status are persisted at each loop boundary. A
+ * process death, a crash or a user stop leaves a resumable snapshot on disk;
+ * [run] accepts that snapshot via [resume], skips steps already DONE, and
+ * re-asks the approval gate for every pending write. A COMPLETED run clears
+ * the snapshot; a cancelled/failed one keeps it resumable.
  */
 class AgentCore(
     private val router: InferenceRouter,
     private val tools: ToolRegistry,
     private val context: ContextBuilder,
     private val approval: ApprovalGate,
+    private val resumeStore: RunResumeStore? = null,
     private val maxSteps: Int = MAX_STEPS,
 ) {
 
@@ -64,7 +79,7 @@ class AgentCore(
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    suspend fun run(task: AgentTask) {
+    suspend fun run(task: AgentTask, resume: ResumableRun? = null) {
         if (_running.value) {
             emit(AgentEvent.Failed("another run is already active"))
             return
@@ -73,24 +88,43 @@ class AgentCore(
         _running.value = true
         val runStart = now()
         try {
-            emit(AgentEvent.PhaseChanged(AgentPhase.PLANNING))
-            val planStart = now()
-            val plan = plan(task.goal)
-            emit(AgentEvent.Metrics("planning", elapsed(planStart)))
-            if (plan.isEmpty()) {
-                emit(AgentEvent.Failed("planning produced no usable steps"))
-                emit(AgentEvent.PhaseChanged(AgentPhase.FAILED))
-                return
-            }
-            // Bound agent autonomy: never execute more than maxSteps actions.
-            val bounded = plan.take(maxSteps)
+            val bounded: List<AgentStep>
+            if (resume != null) {
+                // ---- RESUMED run: no re-planning, restore persisted steps ----
+                val done = resume.steps.count { it.status == AgentStep.Status.DONE.name }
+                emit(AgentEvent.Resumed(done, resume.steps.size))
+                emit(
+                    AgentEvent.Log(
+                        "resuming run ${resume.taskId.take(8)} — " +
+                            "$done/${resume.steps.size} steps already completed",
+                    ),
+                )
+                bounded = resume.toAgentSteps().take(maxSteps)
+                emit(AgentEvent.PhaseChanged(AgentPhase.GATHERING))
+                val touched = bounded.mapNotNull { pathArg(it) }.distinct()
+                context.digest(touched)
+            } else {
+                emit(AgentEvent.PhaseChanged(AgentPhase.PLANNING))
+                val planStart = now()
+                val plan = plan(task.goal)
+                emit(AgentEvent.Metrics("planning", elapsed(planStart)))
+                if (plan.isEmpty()) {
+                    resumeStore?.clear()
+                    emit(AgentEvent.Failed("planning produced no usable steps"))
+                    emit(AgentEvent.PhaseChanged(AgentPhase.FAILED))
+                    return
+                }
+                // Bound agent autonomy: never execute more than maxSteps actions.
+                bounded = plan.take(maxSteps)
 
-            // ---- GATHERING: preload files the plan will read ----------------
-            emit(AgentEvent.PhaseChanged(AgentPhase.GATHERING))
-            val gatherStart = now()
-            val touched = bounded.mapNotNull { pathArg(it) }.distinct()
-            val fileContext = context.digest(touched)
-            emit(AgentEvent.Metrics("gathering", elapsed(gatherStart)))
+                // ---- GATHERING: preload files the plan will read ----------------
+                emit(AgentEvent.PhaseChanged(AgentPhase.GATHERING))
+                val gatherStart = now()
+                val touched = bounded.mapNotNull { pathArg(it) }.distinct()
+                context.digest(touched)
+                emit(AgentEvent.Metrics("gathering", elapsed(gatherStart)))
+            }
+            persistSnapshot(bounded, task, "ACTING", runStart)
 
             // ---- ACTING ------------------------------------------------------
             emit(AgentEvent.PhaseChanged(AgentPhase.ACTING))
@@ -99,6 +133,19 @@ class AgentCore(
             var summary = ""
             var stopped = false
             for (step in bounded) {
+                // Phase 3: work already completed before the interruption is
+                // NEVER re-executed — its persisted result feeds validation.
+                if (resume != null && step.status == AgentStep.Status.DONE) {
+                    emit(
+                        AgentEvent.Log(
+                            "resuming: step ${step.index} (${step.tool}) already done — skipped",
+                        ),
+                    )
+                    executed += step
+                    observations += "${step.tool} ${argValue(step, "path")} -> " +
+                        "done: ${step.result.take(OBSERVATION_CHARS)}"
+                    continue
+                }
                 if (cancelled) {
                     stopped = true
                     break
@@ -122,6 +169,7 @@ class AgentCore(
                         step.status = AgentStep.Status.REJECTED
                         step.result = "rejected by user"
                         emit(AgentEvent.StepFinished(step))
+                        persistSnapshot(bounded, task, "ACTING", runStart)
                         continue
                     }
                 }
@@ -129,16 +177,20 @@ class AgentCore(
                 val stepStart = now()
                 val result = tools.execute(step)
                 emit(AgentEvent.Metrics("tool:${step.tool}", elapsed(stepStart)))
-                step.result = result.output.take(500)
+                step.result = InferenceSafety.sanitize(result.output, 500)
                 step.status = if (result.ok) AgentStep.Status.DONE else AgentStep.Status.FAILED
                 executed += step
                 emit(AgentEvent.StepFinished(step))
+                persistSnapshot(bounded, task, "ACTING", runStart)
                 // Review #5: one bounded observation per executed step;
                 // ContextBudget trims the OLDEST ones before validation.
                 observations += "${step.tool} ${argValue(step, "path")} -> " +
                     "${step.status.name.lowercase()}: ${result.output.take(OBSERVATION_CHARS)}"
             }
             if (stopped) {
+                // Cancelled: the snapshot stays on disk — this run remains
+                // resumable from the exact boundary the user stopped at.
+                persistSnapshot(bounded, task, "ACTING", runStart)
                 emit(AgentEvent.Failed("cancelled by user"))
                 emit(AgentEvent.PhaseChanged(AgentPhase.FAILED))
                 return
@@ -147,6 +199,7 @@ class AgentCore(
             // ---- VALIDATING ---------------------------------------------------
             emit(AgentEvent.PhaseChanged(AgentPhase.VALIDATING))
             if (cancelled) {
+                persistSnapshot(bounded, task, "ACTING", runStart)
                 emit(AgentEvent.Failed("cancelled by user"))
                 emit(AgentEvent.PhaseChanged(AgentPhase.FAILED))
                 return
@@ -168,10 +221,13 @@ class AgentCore(
                     append(boundedObservations)
                 }
             }
-            val validation = router.forTask(TaskKind.VALIDATE)
-                .complete(LlmRequest(messages = listOf(PromptTemplates.validateSystem(reviewInput))))
+            val validation = router.completeWithFallback(
+                LlmRequest(messages = listOf(PromptTemplates.validateSystem(reviewInput))),
+                TaskKind.VALIDATE,
+            )
             emit(AgentEvent.Metrics("validating", elapsed(validateStart)))
-            emit(AgentEvent.Log("review: ${validation.text.take(300)}"))
+            emit(AgentEvent.Log("review via ${validation.source.name.lowercase()}: " +
+                InferenceSafety.sanitize(validation.text, 300)))
 
             // Review #6: surface the p95 snapshot of the slowest tools.
             val stats = tools.snapshot().take(3)
@@ -184,6 +240,8 @@ class AgentCore(
             }
 
             emit(AgentEvent.Metrics("total", elapsed(runStart)))
+            // Completed: the run is done — its resumable snapshot is removed.
+            resumeStore?.clear()
             emit(AgentEvent.Completed(summary.ifBlank { "task finished" }, validation.source.name))
             emit(AgentEvent.PhaseChanged(AgentPhase.DONE))
         } catch (t: Throwable) {
@@ -196,9 +254,8 @@ class AgentCore(
 
     // ------------------------------------------------------------------ plan
     private suspend fun plan(goal: String): List<AgentStep> {
-        val client = router.forTask(TaskKind.PLAN)
         val repoMap = context.repoMap()
-        val raw = client.complete(
+        val raw = router.completeWithFallback(
             LlmRequest(
                 messages = listOf(
                     PromptTemplates.planSystem(repoMap),
@@ -207,9 +264,27 @@ class AgentCore(
                 maxTokens = 1024,
                 temperature = 0.1f,
             ),
+            TaskKind.PLAN,
         )
-        emit(AgentEvent.Log("plan via ${raw.source.name}: ${raw.text.take(200)}"))
-        return PlanParser.parse(raw.text)
+        emit(AgentEvent.Log("plan via ${raw.source.name.lowercase()}: " +
+            InferenceSafety.sanitize(raw.text, 200)))
+        // A typed failure must never reach PlanParser as if it were a plan.
+        if (InferenceSafety.isFailureText(raw.text)) return emptyList()
+        return PlanParser.parse(InferenceSafety.sanitize(raw.text))
+    }
+
+    // ------------------------------------------------------------------ resume
+    private fun persistSnapshot(steps: List<AgentStep>, task: AgentTask, phase: String, startedAt: Long) {
+        resumeStore?.save(
+            RunResumeStore.from(
+                steps = steps,
+                taskId = task.id,
+                goal = task.goal,
+                workspaceUri = task.workspaceUri,
+                phase = phase,
+                startedAt = startedAt,
+            ),
+        )
     }
 
     // ------------------------------------------------------------------ utils

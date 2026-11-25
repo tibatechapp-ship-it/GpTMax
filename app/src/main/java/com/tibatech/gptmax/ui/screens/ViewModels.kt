@@ -6,8 +6,11 @@ import com.tibatech.gptmax.core.agent.AgentEvent
 import com.tibatech.gptmax.core.agent.AgentPhase
 import com.tibatech.gptmax.core.agent.AgentStep
 import com.tibatech.gptmax.core.agent.AgentTask
+import com.tibatech.gptmax.core.agent.ResumableRun
 import com.tibatech.gptmax.core.agent.SaveTransaction
 import com.tibatech.gptmax.core.agent.SessionPinner
+import com.tibatech.gptmax.core.agent.toAgentSteps
+import com.tibatech.gptmax.core.guardrails.InferenceSafety
 import com.tibatech.gptmax.core.prompts.PromptTemplates
 import com.tibatech.gptmax.core.router.ChatMessage
 import com.tibatech.gptmax.core.router.LlmRequest
@@ -93,10 +96,18 @@ class ChatViewModel : ViewModel() {
                             ChatMessage("user", trimmed),
                         maxTokens = 1200,
                     ),
-                ) { delta -> _streamText.value += delta }
-            }.onFailure { _streamText.value += "\n[error] ${it.message}" }
+                ) { delta ->
+                    // Phase 2: the accumulated chat text is hard-capped so a
+                    // runaway provider cannot grow the buffer without bound.
+                    if (_streamText.value.length < STREAM_CAP_CHARS) {
+                        _streamText.value += delta
+                    }
+                }
+            }.onFailure { _streamText.value += "\n${InferenceSafety.failure("stream error: ${it.message}")}" }
 
-            val answer = _streamText.value
+            // Phase 2: control characters and overlong answers never enter
+            // the persisted history.
+            val answer = InferenceSafety.sanitize(_streamText.value)
             db.messageDao().insert(
                 MessageEntity(
                     sessionId = sid,
@@ -116,6 +127,11 @@ class ChatViewModel : ViewModel() {
         ServiceLocator.localEngine.cancel()
         _streaming.value = false
     }
+
+    private companion object {
+        /** Phase 2: hard cap on the accumulated streaming text (chars). */
+        const val STREAM_CAP_CHARS = 64_000
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +150,11 @@ class AgentViewModel : ViewModel() {
     private val workspace = ServiceLocator.workspace
     private var pinnedWorkspaceUri: String? = null
     private var runRowId: Long = 0
+
+    // Phase 3 (external review, resumability): an interrupted run leaves a
+    // persisted snapshot; the screen offers Resume / Discard until cleared.
+    private val resumeStore = ServiceLocator.resumeStore
+    val resumable = MutableStateFlow<ResumableRun?>(resumeStore.load())
 
     val phase = MutableStateFlow<AgentPhase>(AgentPhase.IDLE)
     val steps = MutableStateFlow<List<AgentStep>>(emptyList())
@@ -162,8 +183,12 @@ class AgentViewModel : ViewModel() {
                         perf.value = (perf.value + "${e.label} ${e.millis}ms").takeLast(20)
                         appendLog("perf: ${e.label} ${e.millis}ms")
                     }
+                    is AgentEvent.Resumed -> appendLog(
+                        "resumed: ${e.fromStep}/${e.totalSteps} steps already done",
+                    )
                     is AgentEvent.Completed -> {
                         appendLog("completed: ${e.summary}")
+                        resumable.value = null // phase 3: done — snapshot cleared
                         if (runRowId != 0L) {
                             db.agentRunDao().finish(
                                 runRowId, AgentPhase.DONE.name, e.summary,
@@ -173,6 +198,8 @@ class AgentViewModel : ViewModel() {
                     }
                     is AgentEvent.Failed -> {
                         appendLog("failed: ${e.error}")
+                        // Phase 3: a cancelled/failed run stays resumable.
+                        resumable.value = resumeStore.load()
                         if (runRowId != 0L) {
                             db.agentRunDao().finish(
                                 runRowId, AgentPhase.FAILED.name, e.error,
@@ -209,18 +236,68 @@ class AgentViewModel : ViewModel() {
         perf.value = emptyList()
         viewModelScope.launch {
             runRowId = db.agentRunDao().insert(AgentRunEntity(goal = trimmed, phase = "PLANNING"))
-            core.run(AgentTask(id = UUID.randomUUID().toString(), goal = trimmed))
+            core.run(
+                AgentTask(
+                    id = UUID.randomUUID().toString(),
+                    goal = trimmed,
+                    // Phase 3: the run is pinned to its workspace so a later
+                    // resume refuses a different project.
+                    workspaceUri = pinnedWorkspaceUri,
+                ),
+            )
         }
+    }
+
+    /**
+     * Phase 3 (resumability): resumes the persisted interrupted run. The
+     * workspace is checked FIRST — a snapshot from project A is never
+     * replayed against project B. Completed steps are skipped by the core;
+     * every pending write re-passes the approval gate.
+     */
+    fun resume() {
+        val snapshot = resumable.value ?: return
+        if (core.running.value) return
+        val current = workspace.root.value?.uri?.toString()
+        if (snapshot.workspaceUri != null && snapshot.workspaceUri != current) {
+            appendLog("cannot resume: the run was pinned to a different workspace")
+            return
+        }
+        steps.value = snapshot.toAgentSteps().sortedBy { it.index }
+        logs.value = emptyList()
+        perf.value = emptyList()
+        pinnedWorkspaceUri = current
+        viewModelScope.launch {
+            runRowId = db.agentRunDao().insert(AgentRunEntity(goal = snapshot.goal, phase = "ACTING"))
+            core.run(
+                AgentTask(
+                    id = snapshot.taskId,
+                    goal = snapshot.goal,
+                    workspaceUri = snapshot.workspaceUri,
+                ),
+                resume = snapshot,
+            )
+        }
+    }
+
+    /** Phase 3: the user declines to resume — the snapshot is discarded. */
+    fun dismissResume() {
+        resumeStore.clear()
+        resumable.value = null
     }
 
     /**
      * Phase 1 (external review): cancel must also END an in-flight approval
      * wait — the run may be suspended inside the ApprovalGate, where the
      * cancelled flag alone would never take effect.
+     *
+     * Phase 2: the cancel also reaches the NATIVE engine — a plan/validate
+     * generation stuck in a 10-minute local call stops instead of burning
+     * CPU for minutes after the user pressed Stop.
      */
     fun stop() {
         core.cancel()
         approval.cancelPending()
+        ServiceLocator.localEngine.cancel()
     }
 
     fun respond(approved: Boolean) = approval.respond(approved)

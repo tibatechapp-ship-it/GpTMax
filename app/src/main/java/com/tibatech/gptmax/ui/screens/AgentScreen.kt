@@ -40,6 +40,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.tibatech.gptmax.core.agent.AgentPhase
 import com.tibatech.gptmax.core.agent.AgentStep
+import com.tibatech.gptmax.core.agent.ResumableRun
 
 @Composable
 fun AgentScreen(viewModel: AgentViewModel = androidx.lifecycle.viewmodel.compose.viewModel()) {
@@ -49,6 +50,7 @@ fun AgentScreen(viewModel: AgentViewModel = androidx.lifecycle.viewmodel.compose
     val approval by viewModel.approvalRequest.collectAsState()
     val running by viewModel.running.collectAsState()
     val perf by viewModel.perf.collectAsState()
+    val resumable by viewModel.resumable.collectAsState()
     var goal by remember { mutableStateOf("") }
 
     Column(
@@ -100,6 +102,19 @@ fun AgentScreen(viewModel: AgentViewModel = androidx.lifecycle.viewmodel.compose
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // ---- resume banner (phase 3, resumability) -------------------------
+            if (!running) {
+                resumable?.let { snap ->
+                    item {
+                        ResumableRunCard(
+                            snapshot = snap,
+                            onResume = { viewModel.resume() },
+                            onDiscard = { viewModel.dismissResume() },
+                        )
+                    }
+                }
+            }
+
             // ---- approval gate ---------------------------------------------------
             approval?.let { req ->
                 item {
@@ -145,6 +160,33 @@ fun AgentScreen(viewModel: AgentViewModel = androidx.lifecycle.viewmodel.compose
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 4.dp),
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ResumableRunCard(
+    snapshot: ResumableRun,
+    onResume: () -> Unit,
+    onDiscard: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                "Interrupted run found — " +
+                    "${snapshot.steps.count { it.status == "DONE" }}/${snapshot.steps.size} steps done",
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(
+                snapshot.goal.take(120),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onResume) { Text("Resume") }
+                OutlinedButton(onClick = onDiscard) { Text("Discard") }
             }
         }
     }
