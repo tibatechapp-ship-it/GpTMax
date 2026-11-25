@@ -52,18 +52,18 @@ This roadmap defines the product sequence for GpTMax as a **local-first AI codin
 - [x] Whole-file write tool with bounded change preview
 - [x] Bounded tool router/execution loop
 - [x] Agent cancellation and bounded tool-call budget
-- [x] Managed process tool foundation with timeout/output limits (not yet connected to SAF agent)
-- [x] Private metadata task ledger with tool statuses and output digests (session resume still pending)
-- [x] Deterministic mock-tool and action-parser tests (CI verification pending)
+- [x] Managed process tool foundation with timeout/output limits (connected to the agent; sandbox device-validated in phase 4)
+- [x] Private metadata task ledger with tool statuses and output digests (session resume landed in phase 3)
+- [x] Deterministic mock-tool and action-parser tests (verified green in CI)
 
 ## M4 — Integrated Runtime and terminal
 
 **Exit condition:** approved commands execute in a managed process environment and return structured output; unsafe commands are blocked or require approval.
 
-- [x] Process manager captures stdout/stderr/exit code, timeout, and cancellation (integration/device validation pending)
+- [x] Process manager captures stdout/stderr/exit code, timeout, and cancellation (device-validated by CommandSandboxDeviceTest, phase 4)
 - [x] Executable allowlist and process-execution risk classification
-- [ ] Per-task working directory and environment policy
-- [ ] Resource limits and cleanup of child processes
+- [x] Per-task working directory and environment policy (unique scratch dir per command, bare env, deleted in a finally — phase 4)
+- [x] Resource limits and cleanup of child processes (hard byte cap, wall-clock timeout + destroyForcibly, scratch cleanup — phase 4; grandchild processes out of threat model, allowlist spawns none)
 - [ ] Safe Git and language-tool integrations
 - [ ] Capability detection for Android-compatible tools
 - [ ] Optional build-worker protocol for tasks that exceed device capability

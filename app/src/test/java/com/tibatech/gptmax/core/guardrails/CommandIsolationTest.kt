@@ -42,6 +42,11 @@ class CommandIsolationTest {
     fun `injection characters are denied`() {
         assertTrue(CommandIsolation.validate("echo a\nrm -rf x") is CommandIsolation.Verdict.Denied)
         assertTrue(CommandIsolation.validate("grep `id` file.txt") is CommandIsolation.Verdict.Denied)
+        // Phase 4 defense-in-depth: shell substitution syntax is inert
+        // without a shell, but it is denied anyway so a future execution
+        // change cannot resurrect it silently.
+        assertTrue(CommandIsolation.validate("grep \$(echo hi) file") is CommandIsolation.Verdict.Denied)
+        assertTrue(CommandIsolation.validate("grep <(cat f) file") is CommandIsolation.Verdict.Denied)
     }
 
     @Test

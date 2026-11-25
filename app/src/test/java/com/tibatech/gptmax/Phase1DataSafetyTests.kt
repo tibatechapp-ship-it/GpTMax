@@ -67,8 +67,11 @@ class Phase1DataSafetyTests {
     // ------------------------------- out-of-scope: command execution lockdown
 
     @Test
-    fun `run_command is disabled by default`() = runTest {
-        val tools = ToolRegistry(Phase1FakeWorkspace())
+    fun `run_command kill switch disables execution`() = runTest {
+        // Phase 4: command execution is enabled by DEFAULT (the sandbox
+        // device gate now proves it on every push), but the kill switch
+        // must still hard-disable the tool with the phase-1 refusal.
+        val tools = ToolRegistry(Phase1FakeWorkspace(), commandsEnabled = false)
         val result = tools.execute(step("run_command", "{\"command\": \"ls\"}"))
         assertFalse(result.ok)
         assertTrue(result.output.contains("temporarily disabled"))

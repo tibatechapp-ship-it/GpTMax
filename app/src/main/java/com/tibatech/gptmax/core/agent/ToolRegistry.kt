@@ -2,11 +2,10 @@ package com.tibatech.gptmax.core.agent
 
 import android.content.Context
 import com.tibatech.gptmax.core.guardrails.CommandIsolation
+import com.tibatech.gptmax.core.guardrails.CommandSandbox
 import com.tibatech.gptmax.core.guardrails.PathGuard
 import com.tibatech.gptmax.core.guardrails.SensitivePaths
 import java.io.File
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicReference
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -25,13 +24,20 @@ import kotlinx.serialization.json.jsonPrimitive
  * explicit user approval.
  *
  * Phase 1 (external review, data-protection lockdown):
- * - run_command is DISABLED by default ([commandsEnabled] = false) until the
- *   sandbox passes an explicit device gate; the validated path stays
- *   available behind the switch.
  * - runSandboxed drains the output stream on a daemon thread with a hard
  *   byte cap, concurrent with waitFor(timeout) — the old readBytes()-first
  *   flow could block forever (or exhaust memory) and never applied its cap.
  * - delete_file refuses the workspace root and directories outright.
+ *
+ * Phase 4 (external-review roadmap, command sandbox enablement): the
+ * spawn/drain/kill mechanics moved into [CommandSandbox] so they are
+ * provable on their own — [Phase4CommandSandboxTests] on the JVM and
+ * CommandSandboxDeviceTest in the CI emulator gate both execute REAL
+ * child processes and assert the cwd pin, bare env, output cap, timeout
+ * kill and scratch cleanup. That device gate is the precondition Phase 1
+ * set for re-enabling command execution, so [commandsEnabled] now
+ * defaults to TRUE; the kill switch is retained for emergencies (set it
+ * to false to hard-disable run_command without touching the gate).
  */
 class ToolRegistry(
     private val workspace: WorkspaceOps,
@@ -39,10 +45,12 @@ class ToolRegistry(
     private val monitor: PerformanceMonitor = PerformanceMonitor(),
     private val commandContext: Context? = null,
     /**
-     * Phase 1 (external review, release blocker): broad command execution is
-     * disabled by DEFAULT. Flip explicitly once the sandbox device gate passes.
+     * Phase 4: ENABLED by default — the CommandSandbox device gate
+     * (CommandSandboxDeviceTest in the CI emulator job) proves the sandbox
+     * end-to-end on every push. Set to false as a kill switch; the
+     * disabled path then reports the same refusal message as phase 1.
      */
-    private val commandsEnabled: Boolean = false,
+    private val commandsEnabled: Boolean = true,
 ) {
 
     data class Tool(
@@ -128,11 +136,12 @@ class ToolRegistry(
     // ------------------------------------------------------------ run_command
 
     /**
-     * Phase 1 (external review, release blocker): broad command execution is
-     * TEMPORARILY DISABLED. The sandbox now bounds its output read and
-     * isolates path arguments, but the disable switch stays on until the
-     * phase-2 device gate proves the sandbox end-to-end; flipping
-     * [commandsEnabled] back to true re-enables the validated path below.
+     * Phase 4: command execution is ENABLED behind the full stack —
+     * ApprovalGate (the tool is isWrite, so the user always confirms),
+     * CommandIsolation.validate (allowlist + path-argument isolation +
+     * injection guard) and [CommandSandbox] (per-run scratch dir, bare
+     * env, capped drain, timeout kill). [commandsEnabled] remains as a
+     * kill switch: false restores the phase-1 refusal verbatim.
      */
     private fun runCommand(raw: String): ToolResult {
         if (!commandsEnabled) {
@@ -149,63 +158,36 @@ class ToolRegistry(
     }
 
     /**
-     * Review #6 isolation: bare environment, pinned scratch working
-     * directory, hard timeout and output cap. The ApprovalGate already
-     * asked the user because the tool is registered with isWrite = true.
-     *
-     * Phase 1 fix (external review): the old code read the FULL output
-     * stream with readBytes() BEFORE applying the timeout — a process that
-     * never closed stdout blocked the call forever (or grew memory without
-     * bound) and the timeout never applied. The stream is now drained on a
-     * daemon thread with a hard byte cap, concurrent with waitFor(timeout);
-     * on timeout the process is destroyed and the partial output is reported.
+     * Phase 4: mechanics delegated to [CommandSandbox]; this method only
+     * supplies the app-private scratch root and maps the result envelope.
+     * The sandbox creates a UNIQUE scratch directory per execution and
+     * deletes it in a finally — state never leaks between commands.
      */
     private fun runSandboxed(argv: List<String>): ToolResult {
         val context = commandContext
             ?: return ToolResult(false, "command sandbox unavailable")
         return runCatching {
-            val sandbox = File(context.cacheDir, "cmd-sandbox").apply { mkdirs() }
-            val builder = ProcessBuilder(argv)
-                .directory(sandbox)
-                .redirectErrorStream(true)
-            // Strip the inherited environment entirely, then expose the bare
-            // minimum a toybox binary needs to answer.
-            builder.environment().clear()
-            builder.environment()["PATH"] = "/system/bin:/system/xbin"
-            builder.environment()["HOME"] = sandbox.absolutePath
-            val process = builder.start()
-
-            val drained = AtomicReference("")
-            val drainError = AtomicReference<Exception?>(null)
-            val drainer = Thread {
-                try {
-                    drained.set(CommandIsolation.readBounded(process.inputStream, MAX_OUTPUT_BYTES))
-                } catch (e: Exception) {
-                    drainError.set(e)
-                }
-            }
-            drainer.isDaemon = true
-            drainer.start()
-
-            val finished = process.waitFor(CMD_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-            if (!finished) {
-                process.destroyForcibly()
-            }
-            drainer.join(2_000)
-
-            if (!finished) {
-                ToolResult(
+            val root = File(context.cacheDir, "cmd-sandbox").apply { mkdirs() }
+            val r = CommandSandbox.execute(
+                argv = argv,
+                sandboxRoot = root,
+                timeoutMs = CMD_TIMEOUT_MS,
+                maxOutputBytes = MAX_OUTPUT_BYTES,
+                maxOutputChars = MAX_OUTPUT_CHARS,
+            )
+            when {
+                r.timedOut -> ToolResult(
                     false,
                     "command timed out after ${CMD_TIMEOUT_MS / 1000}s" +
-                        (if (drained.get().isNotBlank()) {
-                            "; partial output: ${drained.get().take(MAX_OUTPUT_CHARS)}"
-                        } else ""),
+                        (if (r.output.isNotBlank()) "; partial output: ${r.output}" else ""),
                 )
-            } else {
-                val output = if (drainError.get() != null) "" else drained.get()
-                ToolResult(
-                    ok = process.exitValue() == 0,
-                    output = output.take(MAX_OUTPUT_CHARS).ifBlank { "(no output)" },
+                r.drainError != null -> ToolResult(
+                    false,
+                    "command failed: output drain error (${r.drainError})",
+                )
+                else -> ToolResult(
+                    ok = r.exitCode == 0,
+                    output = r.output.ifBlank { "(no output)" },
                 )
             }
         }.getOrElse { ToolResult(false, "command failed: ${it.message}") }

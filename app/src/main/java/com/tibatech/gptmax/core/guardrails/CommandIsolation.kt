@@ -46,6 +46,13 @@ object CommandIsolation {
     private const val MAX_TOKENS = 64
     private const val MAX_TOKEN_LENGTH = 4_096
     private val FORBIDDEN_CHARS = charArrayOf('\n', '\r', '\u0000', '`')
+    /**
+     * Phase 4 defense-in-depth: commands run WITHOUT a shell, so shell
+     * substitution syntax is inert today — but it is also never a
+     * legitimate input for the read-only allowlist. Denying it here keeps
+     * the validator honest if the execution path ever changes.
+     */
+    private val FORBIDDEN_SUBSTRINGS = listOf("$(", "<(")
     private val WHITESPACE = Regex("\\s+")
 
     fun validate(raw: String): Verdict {
@@ -54,6 +61,11 @@ object CommandIsolation {
         // separators instead of denying them (caught by CommandIsolationTest).
         if (raw.any { it in FORBIDDEN_CHARS }) {
             return Verdict.Denied("forbidden character in command")
+        }
+        for (s in FORBIDDEN_SUBSTRINGS) {
+            if (s in raw) {
+                return Verdict.Denied("shell substitution is not available (commands run without a shell)")
+            }
         }
         val argv = raw.trim().split(WHITESPACE).filter { it.isNotBlank() }
         if (argv.isEmpty()) return Verdict.Denied("empty command")
@@ -96,7 +108,18 @@ object CommandIsolation {
      * with a drain thread + waitFor(timeout) so the timeout applies WHILE
      * the stream is being drained, not after the read finished.
      */
-    fun readBounded(input: InputStream, maxBytes: Int): String {
+    fun readBounded(input: InputStream, maxBytes: Int): String =
+        readBoundedCounted(input, maxBytes).text
+
+    /**
+     * Phase 4: the counted variant — [BoundedRead.reachedCap] reports whether
+     * the byte cap was hit, so the sandbox can label output as truncated
+     * instead of silently dropping the tail. Kept next to [readBounded] as
+     * one single loop: both exits share the cap, buffer, and UTF-8 decode.
+     */
+    data class BoundedRead(val text: String, val reachedCap: Boolean)
+
+    fun readBoundedCounted(input: InputStream, maxBytes: Int): BoundedRead {
         require(maxBytes > 0) { "maxBytes must be positive" }
         val buf = ByteArray(8_192)
         val out = ByteArrayOutputStream(minOf(maxBytes, 1 shl 16))
@@ -108,6 +131,10 @@ object CommandIsolation {
             out.write(buf, 0, n)
             total += n
         }
-        return out.toString("UTF-8")
+        // Reading EXACTLY up to the cap is reported as reached: the process
+        // may have written more that was never consumed. Overreporting for
+        // an output of exactly maxBytes bytes is safe (a "(truncated)" note),
+        // underreporting would be a silent lie.
+        return BoundedRead(out.toString("UTF-8"), total >= maxBytes)
     }
 }
