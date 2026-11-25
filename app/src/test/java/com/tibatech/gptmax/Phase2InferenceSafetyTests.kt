@@ -85,7 +85,7 @@ class Phase2InferenceSafetyTests {
     // ---------------------------------------------------------------- clamps
 
     @Test
-    fun `temperature clamps into 0..2`() {
+    fun `temperature clamps into 0 to 2`() {
         assertEquals(2f, InferenceSafety.clampTemperature(5f)!!)
         assertEquals(0f, InferenceSafety.clampTemperature(-1f)!!)
         assertEquals(0.7f, InferenceSafety.clampTemperature(0.7f)!!)
@@ -93,7 +93,7 @@ class Phase2InferenceSafetyTests {
     }
 
     @Test
-    fun `maxTokens clamps into 1..ceiling`() {
+    fun `maxTokens clamps into 1 to ceiling`() {
         assertEquals(1, InferenceSafety.clampMaxTokens(0)!!)
         assertEquals(InferenceSafety.MAX_TOKENS_CEILING, InferenceSafety.clampMaxTokens(999_999)!!)
         assertEquals(1024, InferenceSafety.clampMaxTokens(1024)!!)

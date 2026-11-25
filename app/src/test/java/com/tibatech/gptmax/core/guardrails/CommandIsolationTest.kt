@@ -13,10 +13,13 @@ class CommandIsolationTest {
 
     @Test
     fun `allowlisted read-only commands pass`() {
-        val verdict = CommandIsolation.validate("grep -n TODO src/App.kt")
+        // Phase 1 path isolation: arguments must be bare names inside the
+        // sandbox — 'src/App.kt' (any '/') is denied by the later test, so
+        // the positive case exercises the same grep with a bare filename.
+        val verdict = CommandIsolation.validate("grep -n TODO App.kt")
         assertTrue(verdict is CommandIsolation.Verdict.Allowed)
         assertEquals(
-            listOf("grep", "-n", "TODO", "src/App.kt"),
+            listOf("grep", "-n", "TODO", "App.kt"),
             (verdict as CommandIsolation.Verdict.Allowed).argv,
         )
     }

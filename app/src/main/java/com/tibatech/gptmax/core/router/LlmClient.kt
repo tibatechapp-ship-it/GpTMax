@@ -39,6 +39,13 @@ interface LlmClient {
     suspend fun complete(request: LlmRequest): LlmResult {
         val sb = StringBuilder()
         val r = stream(request) { sb.append(it) }
-        return r.copy(text = sb.toString())
+        // Phase 2 bugfix: streamed deltas are the authoritative text only
+        // for streaming clients. A client that returns WITHOUT emitting
+        // deltas (typed failures, non-streaming bridges) carries its text
+        // in the result itself — replacing it with the (empty) accumulator
+        // silently dropped failure markers, and "" was then treated as a
+        // model answer downstream. Prefer the accumulator when present,
+        // fall back to the result's own text otherwise.
+        return if (sb.isEmpty()) r else r.copy(text = sb.toString())
     }
 }
