@@ -23,9 +23,16 @@ class ApprovalGate(private val autoApprove: suspend () -> Boolean) {
 
     private var continuation: kotlin.coroutines.Continuation<Boolean>? = null
 
-    /** Suspends until the user responds, or returns true when auto-approve is on. */
+    /**
+     * Suspends until the user responds, or returns true when auto-approve
+     * is on. Phase 6 (external review): auto-approve NEVER covers command
+     * execution — run_command always requires an explicit human decision,
+     * because running external processes is the one irreversible action
+     * whose effects no journal can roll back.
+     */
     suspend fun request(step: AgentStep, diffPreview: String): Boolean {
-        if (runCatching { autoApprove() }.getOrDefault(false)) return true
+        val auto = runCatching { autoApprove() }.getOrDefault(false)
+        if (auto && step.tool != "run_command") return true
         return suspendCancellableCoroutine { cont ->
             continuation = cont
             _pending.value = ApprovalRequest(step, diffPreview)

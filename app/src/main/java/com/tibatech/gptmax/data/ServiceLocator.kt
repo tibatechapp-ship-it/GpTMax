@@ -4,6 +4,7 @@ import android.content.Context
 import com.tibatech.gptmax.core.agent.AgentCore
 import com.tibatech.gptmax.core.agent.PerformanceMonitor
 import com.tibatech.gptmax.core.agent.RunResumeStore
+import com.tibatech.gptmax.core.agent.WriteJournal
 import com.tibatech.gptmax.core.agent.ToolRegistry
 import com.tibatech.gptmax.core.context.ContextBuilder
 import com.tibatech.gptmax.core.guardrails.ApprovalGate
@@ -79,6 +80,13 @@ object ServiceLocator {
             router = router,
             tools = ToolRegistry(
                 workspace,
+                // Phase 6 (external review, data durability): the rollback
+                // journal is DURABLE and process-death-safe — full byte
+                // copies on disk let a resumed run verify what already
+                // landed and roll back byte-exact at any later time.
+                journal = WriteJournal(
+                    File(context.applicationContext.filesDir, "agent-journal"),
+                ),
                 monitor = performance,
                 commandContext = context.applicationContext,
             ),

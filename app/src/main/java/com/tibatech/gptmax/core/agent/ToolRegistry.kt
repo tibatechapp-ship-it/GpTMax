@@ -38,10 +38,28 @@ import kotlinx.serialization.json.jsonPrimitive
  * set for re-enabling command execution, so [commandsEnabled] now
  * defaults to TRUE; the kill switch is retained for emergencies (set it
  * to false to hard-disable run_command without touching the gate).
+ *
+ * Phase 5 (external-review roadmap M5): `patch_file` applies a unified
+ * diff through [UnifiedDiff.apply] — the FULL patched content is computed
+ * BEFORE any mutation, so a stale hunk aborts with the file untouched
+ * (patch validation + conflict detection). Both write tools share
+ * [writeVerified]: journal -> write -> read-back fingerprint check with
+ * rollback on divergence.
+ *
+ * Phase 6 (external review, data durability):
+ * - the journal is DURABLE (ServiceLocator wires a filesDir-backed
+ *   [WriteJournal]) with FULL byte copies — rollback can no longer restore
+ *   a truncated file, and resume can verify what already landed;
+ * - every write re-reads the file right before mutating it and REFUSES if
+ *   the content changed since it was journaled (approval-window TOCTOU:
+ *   an external edit between preview and write is detected, not lost);
+ * - a write whose args carry the resume-capped sentinel
+ *   ([RunResumeStore.TRUNCATED_MARK]) is refused — a partial write is
+ *   never executed silently.
  */
 class ToolRegistry(
     private val workspace: WorkspaceOps,
-    val journal: WriteJournal = WriteJournal(),
+    val journal: WriteJournal = WriteJournal.inMemory(),
     private val monitor: PerformanceMonitor = PerformanceMonitor(),
     private val commandContext: Context? = null,
     /**
@@ -64,6 +82,11 @@ class ToolRegistry(
         Tool("read_file", false, "read a file's content"),
         Tool("grep", false, "search a pattern across the workspace"),
         Tool("write_file", true, "create or overwrite a file"),
+        Tool(
+            "patch_file",
+            true,
+            "apply a unified diff to an existing file (context must match)",
+        ),
         Tool("delete_file", true, "delete a file"),
         Tool(
             "run_command",
@@ -73,7 +96,18 @@ class ToolRegistry(
         Tool("finish", false, "end the task with a summary"),
     )
 
-    data class ToolResult(val ok: Boolean, val output: String, val durationMs: Long = 0)
+    data class ToolResult(
+        val ok: Boolean,
+        val output: String,
+        val durationMs: Long = 0,
+        /**
+         * Phase 5 (M5 review evidence): the unified diff of what THIS
+         * execution actually changed (write_file / patch_file on success).
+         * AgentCore forwards it to the reviewer — per-step, no journal
+         * lookups, no stale-entry risk.
+         */
+        val diff: String? = null,
+    )
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -88,6 +122,14 @@ class ToolRegistry(
 
     /** Nearest-rank p95 snapshot per tool, for verification/UI surfaces. */
     fun snapshot(): List<PerformanceMonitor.ToolStat> = monitor.snapshot()
+
+    /**
+     * Phase 6 (resume verification): read-only access for [AgentCore] to
+     * check the CURRENT on-disk state of a file against the durable journal
+     * before re-running a pending write step. Read tools already funnel
+     * through SensitivePaths; this helper is for fingerprinting only.
+     */
+    suspend fun peek(path: String): String? = workspace.read(path)
 
     private suspend fun executeInner(step: AgentStep): ToolResult = runCatching {
         val args: JsonObject = json.parseToJsonElement(step.argsJson).let {
@@ -125,8 +167,9 @@ class ToolRegistry(
                         .ifEmpty { "no matches" },
                 )
             }
-            "write_file" -> writeWithJournal(arg("path"), arg("content"))
-            "delete_file" -> deleteWithJournal(arg("path"))
+            "write_file" -> writeWithJournal(arg("path"), arg("content"), step.index)
+            "patch_file" -> patchWithJournal(arg("path"), arg("diff"), step.index)
+            "delete_file" -> deleteWithJournal(arg("path"), step.index)
             "run_command" -> runCommand(arg("command"))
             "finish" -> ToolResult(true, arg("summary").ifBlank { "done" })
             else -> ToolResult(false, "unknown tool: ${step.tool}")
@@ -198,7 +241,20 @@ class ToolRegistry(
      * write fails or the on-disk content diverges afterwards, the previous
      * content is restored from the journal instead of being lost.
      */
-    private suspend fun writeWithJournal(path: String, content: String): ToolResult {
+    private suspend fun writeWithJournal(
+        path: String,
+        content: String,
+        stepIndex: Int,
+    ): ToolResult {
+        if (path.isBlank()) return ToolResult(false, "empty path — refusing to write")
+        // Phase 6: a content capped for the resume snapshot is NEVER written.
+        if (content.contains(RunResumeStore.TRUNCATED_MARK)) {
+            return ToolResult(
+                false,
+                "refusing to write: step args were capped for the resume " +
+                    "snapshot (partial content) — re-run the task to regenerate this step",
+            )
+        }
         if (!PathGuard.isAllowed(path)) return ToolResult(false, PathGuard.describe())
         if (SensitivePaths.isSensitive(path)) return ToolResult(false, SensitivePaths.describe(path))
         if (SensitivePaths.isProtectedFromWrite(path)) {
@@ -206,9 +262,99 @@ class ToolRegistry(
         }
 
         val before = workspace.read(path)
-        val entry = journal.record(path, WriteJournal.Kind.WRITE, before)
+        val entry = journal.record(path, WriteJournal.Kind.WRITE, before, newContent = content, stepIndex = stepIndex)
+        // Phase 6 (TOCTOU closure): the content could have changed between
+        // the journal read and the mutation (approval wait, slow SAF).
+        // Re-read and refuse instead of clobbering the external edit.
+        val recheck = workspace.read(path)
+        if (recheck != before) {
+            return ToolResult(
+                false,
+                "write refused: file changed between journaling and execution " +
+                    "(external modification) — nothing was written",
+            )
+        }
+        val diffText = UnifiedDiff.render(path, before ?: "", content)
+        return writeVerified(path, content, entry).let { r ->
+            if (r.ok) r.copy(diff = diffText) else r
+        }
+    }
 
+    /**
+     * Phase 5 (M5 patch validation): unified-diff edits that change a few
+     * lines instead of rewriting whole files. Fail-closed ordering — the
+     * diff is applied to an in-memory copy FIRST; any context mismatch
+     * aborts with the on-disk file untouched and NO journal entry, so a
+     * stale patch costs nothing. Only a fully-computed patch proceeds
+     * through the same journal -> write -> read-back path as write_file.
+     */
+    private suspend fun patchWithJournal(
+        path: String,
+        diff: String,
+        stepIndex: Int,
+    ): ToolResult {
+        if (path.isBlank()) return ToolResult(false, "empty path — refusing to patch")
+        if (diff.isBlank()) return ToolResult(false, "empty patch — provide a unified diff")
+        if (diff.contains(RunResumeStore.TRUNCATED_MARK)) {
+            return ToolResult(
+                false,
+                "refusing to patch: the diff was capped for the resume snapshot " +
+                    "(partial hunks) — re-run the task to regenerate this step",
+            )
+        }
+        if (!PathGuard.isAllowed(path)) return ToolResult(false, PathGuard.describe())
+        if (SensitivePaths.isSensitive(path)) return ToolResult(false, SensitivePaths.describe(path))
+        if (SensitivePaths.isProtectedFromWrite(path)) {
+            return ToolResult(false, SensitivePaths.describeWrite(path))
+        }
+
+        val before = workspace.read(path)
+            ?: return ToolResult(
+                false,
+                "file not found: $path (patch_file edits existing files; use write_file to create one)",
+            )
+        val applied = UnifiedDiff.apply(before, diff)
+        if (!applied.ok || applied.content == null) {
+            return ToolResult(false, "patch failed: ${applied.error}")
+        }
+        if (applied.content == before) {
+            return ToolResult(true, "patch applied to $path: no change (diff matches current content)")
+        }
+
+        val entry = journal.record(path, WriteJournal.Kind.WRITE, before, newContent = applied.content, stepIndex = stepIndex)
+        // Phase 6 (TOCTOU closure): refuse if the file moved under the patch.
+        val recheck = workspace.read(path)
+        if (recheck != before) {
+            return ToolResult(
+                false,
+                "patch refused: file changed between journaling and execution " +
+                    "(external modification) — nothing was written",
+            )
+        }
+        val diffText = UnifiedDiff.render(path, before, applied.content)
+        val result = writeVerified(path, applied.content, entry)
+        if (result.ok) {
+            return ToolResult(
+                ok = true,
+                output = "patched $path (${applied.hunksApplied} hunk(s); previous content in journal)",
+                diff = diffText,
+            )
+        }
+        return result
+    }
+
+    /**
+     * Shared tail of both write tools (phase 5 refactor): write, read back,
+     * verify the fingerprint, roll back on any failure — the journal entry
+     * [entry] already holds the previous content.
+     */
+    private suspend fun writeVerified(
+        path: String,
+        content: String,
+        entry: WriteJournal.Entry,
+    ): ToolResult {
         if (!workspace.write(path, content)) {
+            val before = entry.previousContent
             return if (before == null) {
                 ToolResult(false, "write failed (no previous content to restore)")
             } else {
@@ -249,7 +395,7 @@ class ToolRegistry(
      * delete path carries its own, stricter containment, enforced again at
      * the WorkspaceRepository choke point.
      */
-    private suspend fun deleteWithJournal(path: String): ToolResult {
+    private suspend fun deleteWithJournal(path: String, stepIndex: Int): ToolResult {
         val clean = path.trim()
         if (clean.isBlank() || clean == "." || clean == "/") {
             return ToolResult(false, "deleting the workspace root is not allowed")
@@ -267,7 +413,18 @@ class ToolRegistry(
         }
 
         val before = workspace.read(clean)
-        val entry = journal.record(clean, WriteJournal.Kind.DELETE, before)
+        val entry = journal.record(clean, WriteJournal.Kind.DELETE, before, stepIndex = stepIndex)
+        // Phase 6 (TOCTOU closure): refuse when the file changed during the
+        // approval wait — deleting an externally-modified file needs a fresh
+        // decision, not a stale approval.
+        val recheck = workspace.read(clean)
+        if (recheck != before) {
+            return ToolResult(
+                false,
+                "delete refused: file changed between journaling and execution " +
+                    "(external modification) — nothing was deleted",
+            )
+        }
         return if (workspace.delete(clean)) {
             ToolResult(
                 true,

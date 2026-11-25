@@ -44,6 +44,15 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE sessionId = :session ORDER BY createdAt ASC")
     fun observe(session: String): Flow<List<MessageEntity>>
 
+    /**
+     * Phase 6 (external review): authoritative, session-scoped history fetch.
+     * A project switch must never feed the previous project's thread into a
+     * new request — this reads the DB for the CURRENT session id instead of
+     * a UI flow that may still hold the old session's list.
+     */
+    @Query("SELECT * FROM messages WHERE sessionId = :session ORDER BY createdAt DESC LIMIT :limit")
+    suspend fun history(session: String, limit: Int): List<MessageEntity>
+
     @Insert
     suspend fun insert(message: MessageEntity): Long
 

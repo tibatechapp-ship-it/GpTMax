@@ -14,6 +14,8 @@ object PromptTemplates {
 - list_dir(path)          -> file listing
 - read_file(path)         -> file content
 - write_file(path, content) -> create/overwrite a file (requires user approval)
+- patch_file(path, diff)  -> apply a unified diff to an EXISTING file; context
+  lines must match the current content exactly (requires user approval)
 - delete_file(path)       -> delete a file (requires user approval)
 - grep(pattern)           -> search the workspace
 - run_command(command)    -> run an allowlisted, read-only command in a sandbox (requires user approval)
@@ -34,8 +36,12 @@ object PromptTemplates {
             - Output ONLY a JSON array, no prose, no markdown fences.
             - Each element: {"tool": string, "args": object, "why": string}
             - Prefer the fewest steps that fully satisfy the goal.
+            - For small edits to an existing file prefer patch_file with a
+              unified diff (path + diff args); use write_file only to create
+              files or replace whole content.
             - Read steps (list_dir/read_file/grep) run automatically;
-              write steps (write_file/delete_file/run_command) require user approval.
+              write steps (write_file/patch_file/delete_file/run_command)
+              require user approval.
             - End with a finish step summarizing the change.
         """.trimIndent(),
     )
@@ -60,12 +66,19 @@ object PromptTemplates {
     fun validateSystem(diffSummary: String): ChatMessage = ChatMessage(
         role = "system",
         content = """
-            You are a strict code reviewer. Review the following change summary
-            produced by an autonomous agent. Point out concrete risks (broken
-            imports, syntax errors, missing tests, security issues). If the
-            change looks safe, say APPROVED and one short reason.
+            You are a strict code reviewer. Review the change evidence produced
+            by an autonomous agent: unified diffs of applied changes, any
+            failed or rejected steps, and recent tool observations. Point out
+            concrete risks (broken imports, syntax errors, missing tests,
+            security issues).
 
-            Change summary:
+            Start your reply with EXACTLY one verdict line:
+            VERDICT: APPROVED        — the change is safe and complete
+            VERDICT: CHANGES_NEEDED  — concrete problems exist
+            Then give one short reason and, for CHANGES_NEEDED, the specific
+            fix required. Never omit the verdict line.
+
+            Change evidence:
             $diffSummary
         """.trimIndent(),
     )
