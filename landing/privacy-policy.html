@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GpTMax — Privacy Policy</title>
+<meta name="description" content="Privacy policy for GpTMax, the local-first AI coding studio for Android. No accounts, no analytics, no ads: your code and chats stay on your device.">
+<style>
+  :root{--bg:#0d1117;--panel:#161b27;--ink:#e6edf3;--muted:#9aa7b8;--accent:#4f8cff;--line:#24304a}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans",sans-serif;line-height:1.7}
+  .wrap{max-width:760px;margin:0 auto;padding:0 20px}
+  header{padding:48px 0 8px}
+  h1{font-size:34px}
+  .meta{color:var(--muted);font-size:14px;margin-top:6px}
+  h2{font-size:21px;margin:34px 0 10px;color:var(--accent)}
+  h3{font-size:16px;margin:20px 0 8px}
+  p,li{font-size:15.5px;color:var(--ink)}
+  ul,ol{margin:8px 0 8px 24px}
+  .muted{color:var(--muted);font-size:14px}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:14.5px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel)}
+  .ar{direction:rtl}
+  .ar h2{color:#22c55e}
+  a{color:var(--accent);text-decoration:none}
+  footer{border-top:1px solid var(--line);margin-top:44px;padding:24px 0 48px;color:var(--muted);font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>GpTMax Privacy Policy</h1>
+  <p class="meta">Effective date: November 26, 2026 · Developer: tibatechapp-ship-it · Applies to the GpTMax Android app (all versions published on Google Play or elsewhere).</p>
+</header>
+
+<h2>1. Summary</h2>
+<p>GpTMax is a <strong>local-first</strong> AI coding studio. The short version:</p>
+<ul>
+  <li>We (the developer) do <strong>not</strong> collect, receive, or store any of your data. There are no accounts, no analytics, no advertising, and no tracking SDKs in the app.</li>
+  <li>Your code, chats, agent runs, settings, and any API key you enter are stored <strong>only on your device</strong>, in app-private storage.</li>
+  <li>The app uses the network only for two user-initiated purposes: downloading AI model files from huggingface.co, and — if you explicitly enable and configure it — optional cloud inference through a provider of your choice using your own API key.</li>
+  <li>Uninstalling the app deletes everything stored locally.</li>
+</ul>
+
+<h2>2. Data stored on your device (never sent to us)</h2>
+<ul>
+  <li><strong>Chats and agent runs</strong> — kept in the app's local Room database (<code>gptmax.db</code>).</li>
+  <li><strong>Settings</strong>, including your optional cloud-provider configuration and API key — kept in app-private DataStore storage.</li>
+  <li><strong>Agent safety artifacts</strong> (rollback journal entries and resume snapshots) — kept in the app's private files directory so interrupted work can be resumed or rolled back.</li>
+  <li><strong>Workspace files</strong> — your own project files, accessed only inside the single folder you grant through Android's document picker (Storage Access Framework). The app has no broad storage permission and does not scan files outside that scope.</li>
+  <li><strong>Downloaded AI models</strong> — stored in the app's private storage; you can delete them at any time from the Models screen inside the app.</li>
+</ul>
+<p class="muted">The app sets <code>allowBackup="false"</code>, so none of this data is included in Android cloud backups.</p>
+
+<h2>3. When the app uses the network</h2>
+<h3>3.1 Model downloads (optional, user-initiated)</h3>
+<p>When you tap a download in the Models screen, the app fetches the chosen GGUF model file directly from <strong>huggingface.co</strong> over HTTPS. The list of catalog models ships with the app; the download goes straight from the model host to your device. The developer does not proxy, log, or observe these downloads.</p>
+
+<h3>3.2 Optional cloud inference (bring-your-own-key)</h3>
+<p>By default GpTMax answers using the on-device engine. If you explicitly configure a cloud provider — BigModel (open.bigmodel.cn), DeepSeek (api.deepseek.com), OpenRouter (openrouter.ai), or a custom OpenAI-compatible endpoint you enter — the app will send your prompt text to that endpoint over HTTPS so the provider can generate a response. Additional facts:</p>
+<ul>
+  <li>The API key you supply is stored only in app-private storage on your device and is transmitted only to the endpoint you configured, as authentication for your own requests.</li>
+  <li>The app refuses non-HTTPS endpoints when an API key is configured.</li>
+  <li>What happens to your prompt text after it reaches the provider is governed by <em>that provider's</em> privacy policy, not ours. Choose providers you trust.</li>
+  <li>Cloud use is entirely optional and off unless you turn it on; the local engine works with no configuration.</li>
+</ul>
+
+<h2>4. Permissions</h2>
+<table>
+  <tr><th>Permission</th><th>Why</th></tr>
+  <tr><td><code>INTERNET</code></td><td>The only declared permission. Used for model downloads (huggingface.co) and, only if you enable it, the optional cloud bridge.</td></tr>
+</table>
+<p>GpTMax does not request access to contacts, location, camera, microphone, phone state, or broad storage. File access is the narrow, user-granted document-picker scope described above.</p>
+
+<h2>5. What we do NOT do</h2>
+<ul>
+  <li>We do not collect or receive your prompts, code, model list, or usage statistics.</li>
+  <li>We do not embed analytics, crash reporting, advertising, or attribution SDKs.</li>
+  <li>We do not sell, rent, or broker any data — there is no data flowing to us to sell.</li>
+  <li>We do not require an account, and there is no sign-in.</li>
+</ul>
+
+<h2>6. Data retention and deletion</h2>
+<p>All data described in section 2 lives on your device. <strong>Uninstalling GpTMax deletes all of it.</strong> Within the app you can delete downloaded models from the Models screen. Because we hold nothing server-side, there is nothing for us to delete on request.</p>
+
+<h2>7. Children's privacy</h2>
+<p>GpTMax is a developer tool and is not directed at children under 13. We do not knowingly collect any personal information from anyone — including children — because no data reaches us.</p>
+
+<h2>8. Security</h2>
+<ul>
+  <li>App-private storage enforced by the Android sandbox; no data is written to shared storage.</li>
+  <li>Cloud backups disabled (<code>allowBackup="false"</code>).</li>
+  <li>All network traffic uses HTTPS; keyed cloud endpoints are HTTPS-enforced by the app.</li>
+  <li>Commands the agent may run (optional, user-approved per command) execute in a restricted sandbox with a bare environment and hard output limits.</li>
+</ul>
+
+<h2>9. Changes to this policy</h2>
+<p>If the app's data practices change materially, we will update this page and change the effective date above before the updated version ships to Google Play.</p>
+
+<h2>10. Contact</h2>
+<p>Questions or requests about privacy: open an issue at <a href="https://github.com/tibatechapp-ship-it/GpTMax/issues">github.com/tibatechapp-ship-it/GpTMax/issues</a>. Support is community-based; see the repository's SUPPORT.md.</p>
+
+<section class="ar">
+  <h2>ملخص سياسة الخصوصية بالعربية</h2>
+  <p>GpTMax استوديو برمجة يعمل <strong>محليًا أولاً</strong>: لا حسابات، لا تحليلات، لا إعلانات، ولا أدوات تتبع — والمطوّر لا يستلم أي بيانات منك.</p>
+  <ul>
+    <li>محادثاتك وأكوادك وإعداداتك وأي مفتاح API تدخله تُخزَّن على جهازك فقط في مساحة خاصة بالتطبيق.</li>
+    <li>يستخدم التطبيق الإنترنت لغرضَين يبدأهما أنت فقط: تنزيل ملفات نماذج GGUF من huggingface.co، وخدمة الاستدلال السحابي الاختيارية عبر مزوّد تختاره أنت بمفتاحك الخاص.</li>
+    <li>المفتاح يُرسل فقط إلى الجهة التي أعددتها بنفسك، ولا يُفعَّل الاتصال السحابي إلا بموافقتك الصريحة، والاستدلال المحلي يعمل بدونه.</li>
+    <li>إلغاء تثبيت التطبيق يحذف كل ما خُزّن محليًا؛ ويمكنك حذف النماذج المنزّلة من شاشة Models داخل التطبيق.</li>
+    <li>الإذن المعلن الوحيد هو INTERNET؛ ولا يطلب التطبيق جهات الاتصال أو الموقع أو الكاميرا أو الميكروفون أو تخزينًا واسعًا — الوصول للملفات عبر مجلد واحد تمنحه بنفسك.</li>
+    <li>للاستفسارات: افتح مشكلة (issue) على صفحة المستودع على GitHub.</li>
+  </ul>
+</section>
+
+<footer>
+  <div><a href="/">← Back to GpTMax home</a> · © 2026 tibatechapp-ship-it · GpTMax is MIT-licensed open source.</div>
+</footer>
+
+</div>
+</body>
+</html>

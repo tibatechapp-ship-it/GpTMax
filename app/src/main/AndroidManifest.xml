@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Permission minimization (Google Play policy): INTERNET is the only
+         declared permission. It backs two user-initiated flows: GGUF model
+         downloads from huggingface.co and the OPTIONAL bring-your-own-key
+         cloud bridge. File access is scoped SAF the user grants at runtime;
+         POST_NOTIFICATIONS was removed (no notification code in the app). -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name=".GpTMaxApp"
