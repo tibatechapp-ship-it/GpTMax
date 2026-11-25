@@ -16,7 +16,7 @@ This roadmap defines the product sequence for GpTMax as a **local-first AI codin
 
 **Exit condition:** a reproducible native build and successful local generation on a real Android ARM64 device.
 
-- [ ] Pin llama.cpp to an immutable upstream revision; record license and provenance
+- [x] Pin llama.cpp to an immutable upstream revision; record license and provenance (pin 1fb8a26 vendored in CI via git fetch, app/src/main/cpp/VENDOR.md)
 - [x] Pin Android Gradle Plugin, Gradle, Kotlin, NDK, CMake, and SDK configuration
 - [x] Create minimal Kotlin/Compose application and small JNI API
 - [ ] Implement native adapter behind the GpTMax Inference API
@@ -46,7 +46,7 @@ This roadmap defines the product sequence for GpTMax as a **local-first AI codin
 
 - [x] Task state machine foundation
 - [x] Initial risk/capability permission policy
-- [ ] Context builder with explicit token/budget limits
+- [x] Context builder with explicit token/budget limits (repoMap entry cap, per-file + total digest budget, observation/diff-evidence budgets, ContextBudget helpers tested)
 - [x] Tool registry with argument contracts, permission levels, and result envelopes
 - [x] File read/search and exact-fragment replacement tools (SAF)
 - [x] Whole-file write tool with bounded change preview
@@ -73,12 +73,12 @@ This roadmap defines the product sequence for GpTMax as a **local-first AI codin
 
 **Exit condition:** agent modifies multiple files, runs available validation, handles a bounded failure/repair cycle, and presents evidence plus a diff.
 
-- [ ] Plan → inspect → patch → validate → diagnose → repair loop
-- [ ] Patch validation and conflict detection
+- [ ] Plan → inspect → patch → validate → diagnose → repair loop (honest outcome statuses + real-diff review evidence landed in phase 5; re-plan on failure still open)
+- [x] Patch validation and conflict detection (UnifiedDiff.apply: fail-closed whole-patch application, context verification with bounded drift search, EOF/CRLF handling — phase 5)
 - [ ] Build/test result parser and failure summarization
-- [ ] Independent review pass with explicit uncertainty
-- [ ] User-visible checkpoints, stop control, and rollback
-- [ ] Approval required for destructive, network, credential, publish, or merge actions
+- [x] Independent review pass with explicit uncertainty (VERDICT protocol, ReviewClassifier, inconclusive → unverified PARTIAL, diff evidence — phase 5)
+- [ ] User-visible checkpoints, stop control, and rollback (durable full-copy rollback journal + journal-verified resume + approval-window TOCTOU refusal landed in phase 6; UI checkpoint list still open)
+- [ ] Approval required for destructive, network, credential, publish, or merge actions (destructive writes always gated; auto-approve never covers run_command — phase 6; network/publish capability classes still open)
 - [ ] Task-level acceptance criteria and coding benchmark
 
 ## M6 — Code intelligence and project memory
