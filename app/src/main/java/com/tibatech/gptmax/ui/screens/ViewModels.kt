@@ -6,6 +6,8 @@ import com.tibatech.gptmax.core.agent.AgentEvent
 import com.tibatech.gptmax.core.agent.AgentPhase
 import com.tibatech.gptmax.core.agent.AgentStep
 import com.tibatech.gptmax.core.agent.AgentTask
+import com.tibatech.gptmax.core.agent.SaveTransaction
+import com.tibatech.gptmax.core.agent.SessionPinner
 import com.tibatech.gptmax.core.prompts.PromptTemplates
 import com.tibatech.gptmax.core.router.ChatMessage
 import com.tibatech.gptmax.core.router.LlmRequest
@@ -19,11 +21,13 @@ import com.tibatech.gptmax.data.repo.WorkspaceRepository
 import com.tibatech.gptmax.data.settings.GpTMaxSettings
 import java.io.File
 import java.util.UUID
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -36,7 +40,15 @@ class ChatViewModel : ViewModel() {
 
     private val db = ServiceLocator.database
     private val router = ServiceLocator.router
-    private val sessionId = "main"
+
+    // Phase 1 (external review): the chat session is pinned to the granted
+    // workspace — switching projects mints a fresh session instead of
+    // appending new-project messages to the old project's thread.
+    private val workspace = ServiceLocator.workspace
+    private val pinner = SessionPinner()
+    private val _sessionId = MutableStateFlow(
+        pinner.bind(workspace.root.value?.uri?.toString()),
+    )
 
     private val _streamText = MutableStateFlow("")
     val streamText: StateFlow<String> = _streamText.asStateFlow()
@@ -47,8 +59,9 @@ class ChatViewModel : ViewModel() {
     private val _badge = MutableStateFlow<Source?>(null)
     val badge: StateFlow<Source?> = _badge.asStateFlow()
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     val messages: StateFlow<List<MessageEntity>> =
-        db.messageDao().observe(sessionId)
+        _sessionId.flatMapLatest { sid -> db.messageDao().observe(sid) }
             .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /** Per-request cancellation (review #5): the job is cancelled, not just the engine. */
@@ -57,10 +70,14 @@ class ChatViewModel : ViewModel() {
     fun send(text: String) {
         val trimmed = text.trim()
         if (trimmed.isEmpty() || _streaming.value) return
+        // Re-bind BEFORE writing: a workspace switch isolates this message
+        // in a brand-new session (phase 1 session pinning).
+        val sid = pinner.bind(workspace.root.value?.uri?.toString())
+        if (sid != _sessionId.value) _sessionId.value = sid
         streamJob = viewModelScope.launch {
             _streaming.value = true
             _streamText.value = ""
-            db.messageDao().insert(MessageEntity(sessionId = sessionId, role = "user", content = trimmed))
+            db.messageDao().insert(MessageEntity(sessionId = sid, role = "user", content = trimmed))
 
             val history = messages.value.takeLast(20).map {
                 ChatMessage(role = it.role, content = it.content)
@@ -82,7 +99,7 @@ class ChatViewModel : ViewModel() {
             val answer = _streamText.value
             db.messageDao().insert(
                 MessageEntity(
-                    sessionId = sessionId,
+                    sessionId = sid,
                     role = "assistant",
                     content = answer,
                     source = _badge.value?.name ?: "",
@@ -110,6 +127,12 @@ class AgentViewModel : ViewModel() {
     private val core = ServiceLocator.agentCore
     private val approval = ServiceLocator.approvalGate
     private val db = ServiceLocator.database
+
+    // Phase 1 (external review): runs are pinned to the workspace they
+    // started on; a mid-run switch cancels the run (and any pending
+    // approval) instead of letting tools operate on a different project.
+    private val workspace = ServiceLocator.workspace
+    private var pinnedWorkspaceUri: String? = null
     private var runRowId: Long = 0
 
     val phase = MutableStateFlow<AgentPhase>(AgentPhase.IDLE)
@@ -161,11 +184,26 @@ class AgentViewModel : ViewModel() {
                 }
             }
         }
+        viewModelScope.launch {
+            var seen: String? = workspace.root.value?.uri?.toString()
+            workspace.root.collect { root ->
+                val now = root?.uri?.toString()
+                if (now != seen) {
+                    seen = now
+                    if (core.running.value) {
+                        core.cancel()
+                        approval.cancelPending()
+                        appendLog("workspace changed mid-run — agent cancelled")
+                    }
+                }
+            }
+        }
     }
 
     fun start(goal: String) {
         val trimmed = goal.trim()
         if (trimmed.isEmpty() || core.running.value) return
+        pinnedWorkspaceUri = workspace.root.value?.uri?.toString()
         steps.value = emptyList()
         logs.value = emptyList()
         perf.value = emptyList()
@@ -175,8 +213,15 @@ class AgentViewModel : ViewModel() {
         }
     }
 
-    /** Per-request cancellation (review #5): aborts at the next loop boundary. */
-    fun stop() = core.cancel()
+    /**
+     * Phase 1 (external review): cancel must also END an in-flight approval
+     * wait — the run may be suspended inside the ApprovalGate, where the
+     * cancelled flag alone would never take effect.
+     */
+    fun stop() {
+        core.cancel()
+        approval.cancelPending()
+    }
 
     fun respond(approved: Boolean) = approval.respond(approved)
 
@@ -284,10 +329,18 @@ class EditorViewModel : ViewModel() {
 
     private val workspace = ServiceLocator.workspace
 
+    // Phase 1 (external review, high severity): save is a verified
+    // transaction — the "unsaved" flag clears ONLY after the write is
+    // confirmed by read-back; failures keep the edits unsaved and surface
+    // an error instead of silently reporting success.
+    private val saveTransaction = SaveTransaction(workspace)
+
     val files = MutableStateFlow<List<WorkspaceRepository.FileNode>>(emptyList())
     val openFile = MutableStateFlow("")
     val content = MutableStateFlow("")
     val dirty = MutableStateFlow(false)
+    val saving = MutableStateFlow(false)
+    val saveError = MutableStateFlow("")
 
     val hasRoot: StateFlow<Boolean> =
         workspace.root.map { it != null }
@@ -316,10 +369,19 @@ class EditorViewModel : ViewModel() {
 
     fun save() {
         val path = openFile.value
-        if (path.isBlank()) return
+        if (path.isBlank() || saving.value) return
         viewModelScope.launch {
-            workspace.write(path, content.value)
-            dirty.value = false
+            saving.value = true
+            saveError.value = ""
+            val outcome = saveTransaction.save(path, content.value)
+            saving.value = false
+            if (outcome.confirmed) {
+                dirty.value = false
+            } else {
+                // The unsaved flag stays TRUE: the user's edits are not on
+                // disk yet, and the reason is surfaced instead of swallowed.
+                saveError.value = outcome.error
+            }
         }
     }
 
