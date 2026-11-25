@@ -3,6 +3,35 @@ package com.tibatech.gptmax.core.agent
 /** Phases of the GpTMax agent loop (matches the architecture diagram). */
 enum class AgentPhase {
     IDLE, PLANNING, GATHERING, ACTING, VALIDATING, AWAITING_APPROVAL, DONE, FAILED,
+
+    /**
+     * Phase 5 (external-review roadmap M5, honest outcomes): terminal states
+     * that are NOT success. DONE is now EARNED — any failed step, rejected
+     * write, truncated plan, missing finish or inconclusive review lands in
+     * one of these instead of masquerading as DONE.
+     */
+    PARTIAL, BLOCKED, VERIFY_FAILED,
+}
+
+/**
+ * Phase 5 (M5): what actually happened at the end of a run.
+ *
+ * - [DONE] — every step succeeded AND the reviewer approved;
+ * - [PARTIAL] — something failed, was truncated, never ran, or the review
+ *   was inconclusive (results delivered but UNVERIFIED or incomplete);
+ * - [BLOCKED] — the user rejected a write the plan needed;
+ * - [VERIFY_FAILED] — all steps ran but the reviewer demanded changes.
+ */
+enum class CompletionStatus {
+    DONE, PARTIAL, BLOCKED, VERIFY_FAILED,
+}
+
+/** The terminal [AgentPhase] matching a completion status. */
+fun CompletionStatus.toPhase(): AgentPhase = when (this) {
+    CompletionStatus.DONE -> AgentPhase.DONE
+    CompletionStatus.PARTIAL -> AgentPhase.PARTIAL
+    CompletionStatus.BLOCKED -> AgentPhase.BLOCKED
+    CompletionStatus.VERIFY_FAILED -> AgentPhase.VERIFY_FAILED
 }
 
 data class AgentTask(
@@ -48,7 +77,16 @@ sealed class AgentEvent {
      */
     data class Resumed(val fromStep: Int, val totalSteps: Int) : AgentEvent()
 
-    data class Completed(val summary: String, val source: String) : AgentEvent()
+    /**
+     * Phase 5: a run finished with an HONEST outcome. [status] distinguishes
+     * real success (DONE) from partial/blocked/unverified results — the UI,
+     * the run ledger and the resumability policy all branch on it.
+     */
+    data class Completed(
+        val summary: String,
+        val source: String,
+        val status: CompletionStatus,
+    ) : AgentEvent()
     data class Failed(val error: String) : AgentEvent()
 }
 
@@ -72,7 +110,10 @@ object PlanParser {
                     description = why,
                     // Review #6: run_command is write-class — it always goes
                     // through the user approval gate before execution.
+                    // Phase 5: patch_file is write-class too (approval +
+                    // journal), and its diff preview is the patch itself.
                     isWrite = tool == "write_file" ||
+                        tool == "patch_file" ||
                         tool == "delete_file" ||
                         tool == "run_command",
                 )
