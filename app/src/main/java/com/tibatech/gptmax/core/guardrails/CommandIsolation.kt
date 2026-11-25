@@ -1,7 +1,10 @@
 package com.tibatech.gptmax.core.guardrails
 
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+
 /**
- * Fix #6 (code review): sandbox validator for the `run_command` tool.
+ * Sandbox validator for the `run_command` tool.
  *
  * Commands run only after explicit user approval (the tool is marked
  * isWrite, so the ApprovalGate always asks first), and only when they pass
@@ -9,6 +12,17 @@ package com.tibatech.gptmax.core.guardrails
  * process, pinned scratch working directory, hard timeout and output cap.
  *
  * Pure Kotlin: unit-testable on the JVM without Android.
+ *
+ * Phase 1 (data-safety lockdown, external review):
+ * - Path-argument isolation: the sandbox pins cwd to an empty scratch
+ *   directory, but nothing before now stopped `cat ../../data/x` or
+ *   `grep pattern /data/local/tmp` from REACHING outside it. Any argument
+ *   containing a path separator ('/' or '\\') is now denied outright, so
+ *   every file the command touches must be a bare name inside the sandbox.
+ * - Bounded output: [readBounded] is the only sanctioned way to consume a
+ *   process stream — never readBytes() the raw stream, which blocks forever
+ *   (or exhausts memory) when a process never closes stdout, and applies
+ *   the timeout only after the unbounded read already finished.
  */
 object CommandIsolation {
 
@@ -47,6 +61,9 @@ object CommandIsolation {
         if (argv[0].contains('/')) {
             return Verdict.Denied("binary must be a bare name, got: ${argv[0]}")
         }
+        if (argv[0].contains('\\')) {
+            return Verdict.Denied("binary must be a bare name, got: ${argv[0]}")
+        }
         if (argv[0].lowercase() !in ALLOWED_BINARIES) {
             return Verdict.Denied("binary not allowlisted: ${argv[0]}")
         }
@@ -56,6 +73,41 @@ object CommandIsolation {
                 return Verdict.Denied("forbidden character in argument")
             }
         }
+        // Phase 1 path isolation: argv is executed directly (no shell) with
+        // cwd pinned to the scratch dir, so a path separator is the only way
+        // to reach anything outside it. Deny it in EVERY argument — that
+        // kills absolute paths, '../' traversal, --flag=/x values and
+        // windows drive letters in one rule.
+        for (token in argv.drop(1)) {
+            if (token.contains('/')) {
+                return Verdict.Denied("path arguments must stay inside the sandbox (no '/')")
+            }
+            if (token.contains('\\')) {
+                return Verdict.Denied("path arguments must stay inside the sandbox (no '\\')")
+            }
+        }
         return Verdict.Allowed(argv)
+    }
+
+    /**
+     * Phase 1: read a process output stream with a HARD byte cap. Stops
+     * reading at [maxBytes] — a process producing endless output can no
+     * longer block the caller forever or grow memory without bound. Pair
+     * with a drain thread + waitFor(timeout) so the timeout applies WHILE
+     * the stream is being drained, not after the read finished.
+     */
+    fun readBounded(input: InputStream, maxBytes: Int): String {
+        require(maxBytes > 0) { "maxBytes must be positive" }
+        val buf = ByteArray(8_192)
+        val out = ByteArrayOutputStream(minOf(maxBytes, 1 shl 16))
+        var total = 0
+        while (total < maxBytes) {
+            val want = minOf(buf.size, maxBytes - total)
+            val n = input.read(buf, 0, want)
+            if (n < 0) break
+            out.write(buf, 0, n)
+            total += n
+        }
+        return out.toString("UTF-8")
     }
 }

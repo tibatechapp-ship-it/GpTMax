@@ -43,4 +43,18 @@ class ApprovalGate(private val autoApprove: suspend () -> Boolean) {
         _pending.value = null
         cont?.resumeWith(Result.success(approved))
     }
+
+    /**
+     * Phase 1 (external review): a user-driven cancel must END an in-flight
+     * wait, not leave the agent hanging on a card nobody will answer.
+     * The suspended request() resumes with `false`; the caller checks its
+     * cancelled flag right after the gate and aborts the run instead of
+     * executing the step. Idempotent — a no-op when nothing is pending.
+     */
+    fun cancelPending() {
+        val cont = continuation
+        continuation = null
+        _pending.value = null
+        cont?.resumeWith(Result.success(false))
+    }
 }

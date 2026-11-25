@@ -25,6 +25,12 @@ import kotlinx.coroutines.withContext
  * is the single choke point — the editor UI saves straight through here,
  * so a stale UI state can never touch credential material even though the
  * ToolRegistry already guards its own tool calls.
+ *
+ * Phase 1 (external review, release blocker): deletes can never touch the
+ * workspace root or a directory. The tool layer refuses them; this
+ * choke point refuses them AGAIN, so the editor UI and any future direct
+ * caller inherit the same no-folder-deletion policy. Browsing (list/read)
+ * and mutation (write/delete) keep their distinct guard sets.
  */
 class WorkspaceRepository(private val context: Context) : WorkspaceOps {
 
@@ -86,12 +92,28 @@ class WorkspaceRepository(private val context: Context) : WorkspaceOps {
 
     // ---------------------------------------------------------------- delete
     override suspend fun delete(path: String): Boolean = withContext(Dispatchers.IO) {
-        // Same choke-point guards as write: nothing outside the workspace,
-        // nothing sensitive, nothing that is irreversible key material.
-        if (!PathGuard.isAllowed(path)) return@withContext false
-        if (SensitivePaths.isSensitive(path)) return@withContext false
-        if (SensitivePaths.isProtectedFromWrite(path)) return@withContext false
-        runCatching { resolve(path)?.delete() == true }.getOrDefault(false)
+        // Phase 1 (external review, release blocker): the workspace root and
+        // directories are never deletable here — the tool layer refuses them
+        // too; this is the second, UI-facing choke point (the editor and any
+        // future direct caller inherit the same policy). Same credential
+        // guards as write apply.
+        val clean = path.trim()
+        if (clean.isBlank() || clean == "." || clean == "/") return@withContext false
+        if (!PathGuard.isAllowed(clean)) return@withContext false
+        if (SensitivePaths.isSensitive(clean)) return@withContext false
+        if (SensitivePaths.isProtectedFromWrite(clean)) return@withContext false
+        runCatching {
+            val file = resolve(clean) ?: return@runCatching false
+            if (file.isDirectory) return@runCatching false
+            file.delete()
+        }.getOrDefault(false)
+    }
+
+    // ------------------------------------------------------------ isDirectory
+    override suspend fun isDirectory(path: String): Boolean = withContext(Dispatchers.IO) {
+        val clean = path.trim()
+        if (clean.isBlank() || clean == "." || clean == "/") return@withContext true // the root IS a directory
+        runCatching { resolve(clean)?.isDirectory == true }.getOrDefault(false)
     }
 
     // ------------------------------------------------------------------ grep

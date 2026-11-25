@@ -6,6 +6,7 @@ import com.tibatech.gptmax.core.guardrails.PathGuard
 import com.tibatech.gptmax.core.guardrails.SensitivePaths
 import java.io.File
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -22,12 +23,26 @@ import kotlinx.serialization.json.jsonPrimitive
  * PerformanceMonitor times every execution, and the run_command tool only
  * runs allowlisted, read-only binaries inside an isolated sandbox after
  * explicit user approval.
+ *
+ * Phase 1 (external review, data-protection lockdown):
+ * - run_command is DISABLED by default ([commandsEnabled] = false) until the
+ *   sandbox passes an explicit device gate; the validated path stays
+ *   available behind the switch.
+ * - runSandboxed drains the output stream on a daemon thread with a hard
+ *   byte cap, concurrent with waitFor(timeout) — the old readBytes()-first
+ *   flow could block forever (or exhaust memory) and never applied its cap.
+ * - delete_file refuses the workspace root and directories outright.
  */
 class ToolRegistry(
     private val workspace: WorkspaceOps,
     val journal: WriteJournal = WriteJournal(),
     private val monitor: PerformanceMonitor = PerformanceMonitor(),
     private val commandContext: Context? = null,
+    /**
+     * Phase 1 (external review, release blocker): broad command execution is
+     * disabled by DEFAULT. Flip explicitly once the sandbox device gate passes.
+     */
+    private val commandsEnabled: Boolean = false,
 ) {
 
     data class Tool(
@@ -112,16 +127,38 @@ class ToolRegistry(
 
     // ------------------------------------------------------------ run_command
 
-    private fun runCommand(raw: String): ToolResult =
-        when (val verdict = CommandIsolation.validate(raw)) {
+    /**
+     * Phase 1 (external review, release blocker): broad command execution is
+     * TEMPORARILY DISABLED. The sandbox now bounds its output read and
+     * isolates path arguments, but the disable switch stays on until the
+     * phase-2 device gate proves the sandbox end-to-end; flipping
+     * [commandsEnabled] back to true re-enables the validated path below.
+     */
+    private fun runCommand(raw: String): ToolResult {
+        if (!commandsEnabled) {
+            return ToolResult(
+                false,
+                "run_command is temporarily disabled (phase 1 data-safety lockdown) — " +
+                    "no external process runs until the sandbox passes its device gate",
+            )
+        }
+        return when (val verdict = CommandIsolation.validate(raw)) {
             is CommandIsolation.Verdict.Denied -> ToolResult(false, "denied: ${verdict.reason}")
             is CommandIsolation.Verdict.Allowed -> runSandboxed(verdict.argv)
         }
+    }
 
     /**
      * Review #6 isolation: bare environment, pinned scratch working
      * directory, hard timeout and output cap. The ApprovalGate already
      * asked the user because the tool is registered with isWrite = true.
+     *
+     * Phase 1 fix (external review): the old code read the FULL output
+     * stream with readBytes() BEFORE applying the timeout — a process that
+     * never closed stdout blocked the call forever (or grew memory without
+     * bound) and the timeout never applied. The stream is now drained on a
+     * daemon thread with a hard byte cap, concurrent with waitFor(timeout);
+     * on timeout the process is destroyed and the partial output is reported.
      */
     private fun runSandboxed(argv: List<String>): ToolResult {
         val context = commandContext
@@ -137,12 +174,35 @@ class ToolRegistry(
             builder.environment()["PATH"] = "/system/bin:/system/xbin"
             builder.environment()["HOME"] = sandbox.absolutePath
             val process = builder.start()
-            val output = process.inputStream.readBytes().toString(Charsets.UTF_8)
+
+            val drained = AtomicReference("")
+            val drainError = AtomicReference<Exception?>(null)
+            val drainer = Thread {
+                try {
+                    drained.set(CommandIsolation.readBounded(process.inputStream, MAX_OUTPUT_BYTES))
+                } catch (e: Exception) {
+                    drainError.set(e)
+                }
+            }
+            drainer.isDaemon = true
+            drainer.start()
+
             val finished = process.waitFor(CMD_TIMEOUT_MS, TimeUnit.MILLISECONDS)
             if (!finished) {
                 process.destroyForcibly()
-                ToolResult(false, "command timed out after ${CMD_TIMEOUT_MS / 1000}s")
+            }
+            drainer.join(2_000)
+
+            if (!finished) {
+                ToolResult(
+                    false,
+                    "command timed out after ${CMD_TIMEOUT_MS / 1000}s" +
+                        (if (drained.get().isNotBlank()) {
+                            "; partial output: ${drained.get().take(MAX_OUTPUT_CHARS)}"
+                        } else ""),
+                )
             } else {
+                val output = if (drainError.get() != null) "" else drained.get()
                 ToolResult(
                     ok = process.exitValue() == 0,
                     output = output.take(MAX_OUTPUT_CHARS).ifBlank { "(no output)" },
@@ -197,27 +257,46 @@ class ToolRegistry(
         }
     }
 
-    /** Delete with journal; restores the previous content if the delete fails. */
+    /**
+     * Delete with journal; restores the previous content if the delete fails.
+     *
+     * Phase 1 (external review, release blocker): the workspace root and
+     * directories are NEVER deletable. PathGuard deliberately allows ""
+     * (root is a valid listing/read target), but a SAF delete on the tree
+     * root or a folder wipes the whole subtree with no undo copy — so the
+     * delete path carries its own, stricter containment, enforced again at
+     * the WorkspaceRepository choke point.
+     */
     private suspend fun deleteWithJournal(path: String): ToolResult {
-        if (!PathGuard.isAllowed(path)) return ToolResult(false, PathGuard.describe())
-        if (SensitivePaths.isSensitive(path)) return ToolResult(false, SensitivePaths.describe(path))
-        if (SensitivePaths.isProtectedFromWrite(path)) {
-            return ToolResult(false, SensitivePaths.describeWrite(path))
+        val clean = path.trim()
+        if (clean.isBlank() || clean == "." || clean == "/") {
+            return ToolResult(false, "deleting the workspace root is not allowed")
+        }
+        if (!PathGuard.isAllowed(clean)) return ToolResult(false, PathGuard.describe())
+        if (SensitivePaths.isSensitive(clean)) return ToolResult(false, SensitivePaths.describe(clean))
+        if (SensitivePaths.isProtectedFromWrite(clean)) {
+            return ToolResult(false, SensitivePaths.describeWrite(clean))
+        }
+        if (workspace.isDirectory(clean)) {
+            return ToolResult(
+                false,
+                "directory deletion is disabled (files only) — remove folders explicitly outside the agent",
+            )
         }
 
-        val before = workspace.read(path)
-        val entry = journal.record(path, WriteJournal.Kind.DELETE, before)
-        return if (workspace.delete(path)) {
+        val before = workspace.read(clean)
+        val entry = journal.record(clean, WriteJournal.Kind.DELETE, before)
+        return if (workspace.delete(clean)) {
             ToolResult(
                 true,
-                if (entry.hadFileBefore) "deleted $path (previous content in journal)" else "deleted $path",
+                if (entry.hadFileBefore) "deleted $clean (previous content in journal)" else "deleted $clean",
             )
         } else {
-            val restored = before?.let { workspace.write(path, it) } ?: true
+            val restored = before?.let { workspace.write(clean, it) } ?: true
             ToolResult(
                 false,
                 if (restored) "delete failed; workspace unchanged"
-                else "delete failed and restore failed — journal keeps the content of $path",
+                else "delete failed and restore failed — journal keeps the content of $clean",
             )
         }
     }
@@ -226,5 +305,8 @@ class ToolRegistry(
         const val MAX_FILE_CHARS = 12_000
         const val CMD_TIMEOUT_MS = 10_000L
         const val MAX_OUTPUT_CHARS = 8_000
+
+        /** Phase 1: hard cap for the concurrent output drain (bytes). */
+        const val MAX_OUTPUT_BYTES = 65_536
     }
 }
