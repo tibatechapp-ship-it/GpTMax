@@ -23,13 +23,16 @@ import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -89,12 +92,17 @@ class Phase3ResumabilityTests {
     }
 
     @Test
-    fun `oversized args are truncated not fatal`() {
+    fun `oversized args are capped to valid JSON with the sentinel`() {
         val store = RunResumeStore(newDir(), maxStepArgsChars = 100)
         val big = "{\"content\": \"" + "x".repeat(10_000) + "\"}"
         store.save(RunResumeStore.from(listOf(step(0, "write_file", big)), "t", "g", null, "ACTING", 0))
         val loaded = store.load()!!
-        assertEquals(100, loaded.steps[0].argsJson.length)
+        // Phase 6: the capped args MUST still parse — the old blind string
+        // truncation produced invalid JSON that failed to load on resume.
+        val content = Json.parseToJsonElement(loaded.steps[0].argsJson)
+            .jsonObject["content"]!!.jsonPrimitive.content
+        assertTrue(content.endsWith(RunResumeStore.TRUNCATED_MARK))
+        assertTrue(loaded.steps[0].result.contains("capped for resume"))
     }
 
     @Test
