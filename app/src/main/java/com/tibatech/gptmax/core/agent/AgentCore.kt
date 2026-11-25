@@ -345,7 +345,7 @@ class AgentCore(
                 resumeStore?.clear()
             } else {
                 persistSnapshot(bounded, task, "ACTING", runStart)
-                emit(AgentEvent.Log("run kept resumable (status: ${status.name.lowercase()}))"))
+                emit(AgentEvent.Log("run kept resumable (status: ${status.name.lowercase()})"))
             }
         } catch (t: Throwable) {
             emit(AgentEvent.Failed(t.message ?: t.javaClass.simpleName))
